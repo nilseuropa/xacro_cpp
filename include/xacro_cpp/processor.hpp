@@ -31,6 +31,7 @@ public:
   struct MacroParam {
     std::string name;
     std::string default_value; // optional
+    bool is_block = false;     // xacro block parameter (params prefixed with '*')
   };
   struct MacroDef {
     std::string name;
@@ -46,6 +47,10 @@ private:
   std::unordered_map<std::string, std::string> vars_;
   std::unordered_map<std::string, MacroDef> macros_;
   std::string base_dir_;
+  bool modified_ = false;
+  // Minimal YAML store for xacro.load_yaml(name) assigned to properties
+  // maps property-name -> { key -> vector of doubles }
+  std::unordered_map<std::string, std::unordered_map<std::string, std::vector<double>>> yaml_maps_;
 
   bool loadDocument(const std::string& path, std::string* error_msg);
   bool processDocument(std::string* error_msg);
@@ -61,12 +66,14 @@ private:
   static std::string getAttr(const tinyxml2::XMLElement* el, const char* name);
   static std::string trim(const std::string& s);
 
-  bool handleIfUnless(tinyxml2::XMLElement* el);
+  bool handleIfUnless(tinyxml2::XMLElement* el, std::vector<tinyxml2::XMLNode*>* inserted_out = nullptr);
   bool defineProperty(const tinyxml2::XMLElement* el);
   bool defineArg(const tinyxml2::XMLElement* el);
   bool defineMacro(tinyxml2::XMLElement* el);
-  bool expandIncludesInNode(tinyxml2::XMLNode* node, std::string* error_msg);
+  bool expandIncludesInNode(tinyxml2::XMLNode* node, const std::string& base_dir, std::string* error_msg);
   bool expandNode(tinyxml2::XMLNode* node);
+  // Returns true if 'el' still exists and its children should be traversed;
+  // returns false if 'el' was deleted/replaced and traversal should not use 'el'.
   bool expandElement(tinyxml2::XMLElement* el);
   bool expandMacroCall(tinyxml2::XMLElement* el);
   void substituteAttributes(tinyxml2::XMLElement* el);

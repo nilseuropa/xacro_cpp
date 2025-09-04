@@ -1,23 +1,88 @@
-Overview
-This is a minimal, pure C++ port of core xacro functionality focused on common URDF workflows. It aims to be Python-free and dependency-light.
 
-Supported (initial MVP)
-- Properties: <xacro:property name="..." value="..."/>
-- Arguments: <xacro:arg name="..." default="..."/>, CLI overrides as name:=value
-- Substitutions: ${...} expressions using a tiny evaluator (numbers, + - * /, comparisons)
-- Package lookup: ${find('pkg')} and $(find pkg) resolve to the package share directory (via ament_index_cpp or env fallback)
-  - If ament_index/env paths fail and the requested package is the one containing the input file, it falls back to that package’s source root.
-- Macros: <xacro:macro name="m" params="a b:=1">...</xacro:macro> and calls via <m a="..."/>
-- Conditionals: <xacro:if value="...">...</xacro:if>, <xacro:unless value="...">...</xacro:unless>
-- Includes: <xacro:include filename="..."/>
+This is a minimal, pure C++ port of core xacro functionality focused on common URDF workflows. It aims to be Python‑free and dependency‑light while matching Python xacro behavior for typical patterns used in robot descriptions.
 
-Not yet implemented
-- Python blocks, YAML, ROS param substitution, advanced namespaces, property scopes identical to Python xacro, block macros, and plugin features. These can be added incrementally if needed.
+### Supported Functionality
+- **Arguments**: <xacro:arg name="..." default="..."/>
+  - CLI overrides: pass as name:=value.
+  - xacro:arg elements are removed from the final output after merging defaults and CLI.
+- **Properties**: <xacro:property name="..." value="..."/>
+  - Evaluated early and during expansion; property nodes are removed from final output.
+- **Includes**: <xacro:include filename="..."/>
+  - Relative paths resolve per‑file (nested includes use their own base directory).
+  - Includes inside conditionals are discovered and expanded only for active branches.
+- **Package lookup**: ${find('pkg')} and $(find pkg)
+  - ament_index_cpp when available.
+  - Fallback to AMENT_PREFIX_PATH / COLCON_PREFIX_PATH (…/share/pkg).
+  - Last resort: source tree fallback near the current package (scans …/src/**/package.xml).
+- **Substitutions** in attributes and text nodes
+  - ${...} inside attribute values and element text.
+  - $(arg name) anywhere in strings (outside ${...}).
+  - Numeric expressions via tinyexpr: +, -, *, /, parentheses; pi constant.
+  - Indexing for whitespace‑separated values: ${var[2]}.
+  - ${find('pkg')} and $(find pkg) inside strings.
+- **Conditionals**
+  - <xacro:if value="..."> and <xacro:unless value="...">.
+  - Evaluated with boolean semantics:
+    - true/false (case‑insensitive), numeric non‑zero truthiness, and comparisons (==, !=, <, <=, >, >=) between identifiers, quoted strings, and numeric literals.
+  - Inside macro bodies, conditionals use the macro’s local parameter/property scope and are spliced immediately.
+- **Macros**
+  - Define: <xacro:macro name="m" params="a b:=1 *origin">…</xacro:macro>
+  - Call with or without prefix: <m a="..."/> or <xacro:m a="..."/>.
+  - Parameter binding:
+    - Positional via names in params; defaults with ":=".
+    - Parameters can reference each other; resolved iteratively.
+    - Macro parameters shadow global variables in the macro scope.
+  - Block parameters (prefixed with “*” in params)
+    - Captured from child elements of the call site whose tag matches the block name.
+    - Spliced at <xacro:insert_block name="block"/> occurrences inside the macro body.
+- **YAML loading** (subset)
+  - ${xacro.load_yaml(path)} usable via property assignment: <xacro:property name="cfg" value="${xacro.load_yaml('file.yaml')}"/>
+  - Access a top‑level list/scalar with: ${cfg['key']} → sets a space‑separated string; supports ${cfg['key'][i]} in expressions.
+  - Supported YAML: top‑level keys with numeric scalars or lists (inline [1,2] or simple multi‑line "- 1").
 
-Build
-- Requires TinyXML2 development package installed on the system (e.g., libtinyxml2-dev).
-- As a plain CMake project: mkdir build && cd build && cmake .. && make -j
-- In a ROS 2 workspace: colcon build --packages-select xacro_cpp
+### Behavioral Notes
+- Processing order: args/props → includes → args/props again → collect macros → iterative expansion (conditionals/macros/substitutions until stable).
+- Macro calls substitute attributes and text using the macro’s local scope. Nested macro calls expand in later iterations.
+- Text node substitution ensures topics and other inline values evaluate correctly.
 
-CLI
-- xacro_cpp input.xacro [-o output.xml] [name:=value ...]
+### Known Gaps / Differences vs Python xacro
+- No Python eval/expression features; numeric math and simple comparisons only (no and/or/not operators).
+- YAML parser is intentionally minimal (numeric lists/scalars only). Nested maps or strings are not interpreted beyond inserting raw text.
+- Property scoping is simplified; properties defined inside macros affect global state (common in many URDF xacros, but not identical to Python scoping rules).
+- Output formatting and attribute ordering may differ slightly; autogenerated header comments are not emitted.
+
+### Build
+Requires TinyXML2 development package installed on the system (e.g., libtinyxml2-dev).
+
+As a plain CMake project:
+```
+mkdir build && cd build && cmake .. && make -j
+```
+
+In a ROS 2 workspace
+```
+colcon build --packages-select xacro_cpp
+```
+
+### CLI
+```
+xacro_cpp input.xacro [-o output.xml] [name:=value ...]
+```
+
+Examples
+- Resolve package files: <xacro:include filename="$(find my_pkg)/xacro/part.xacro"/>
+- Use args: <xacro:if value="$(arg use_feature)">…</xacro:if>
+- Macro with block param:
+  <xacro:macro name="wrap" params="name *origin">
+    <link name="${name}"/>
+    <joint name="${name}_joint" type="fixed">
+      <xacro:insert_block name="origin"/>
+    </joint>
+  </xacro:macro>
+  <xacro:wrap name="sensor">
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </xacro:wrap>
+
+Troubleshooting
+- If a package cannot be found, ensure your ROS environment is sourced so ament index and AMENT_PREFIX_PATH are available. The source‑tree fallback covers typical dev layouts under …/src.
+- If mutually exclusive branches both appear, check the conditional expression uses values available in that scope; string comparisons should be of the form ${side == 'left'} (quoted when ambiguous).

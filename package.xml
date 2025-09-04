@@ -2,8 +2,8 @@
 <package format="3">
   <name>xacro_cpp</name>
   <version>0.1.0</version>
-  <description>Minimal pure C++ implementation of core xacro features (no Python).</description>
-  <maintainer email="unknown@example.com">Unknown</maintainer>
+  <description>Minimal pure C++ implementation of core xacro features</description>
+  <maintainer email="marton@nowtech.hu">nilseuropa</maintainer>
   <license>BSD</license>
   <buildtool_depend>ament_cmake</buildtool_depend>
   <build_depend>tinyxml2</build_depend>
