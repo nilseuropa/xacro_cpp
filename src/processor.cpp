@@ -536,6 +536,22 @@ bool Processor::run(const Options& opts, std::string* error_msg) {
   return true;
 }
 
+bool Processor::runToString(const Options& opts, std::string* urdf_xml, std::string* error_msg) {
+  base_dir_ = dirname(opts.input_path);
+  vars_.clear(); macros_.clear();
+  for (const auto& kv : opts.cli_args) vars_[kv.first] = kv.second;
+
+  detect_current_package_from(base_dir_);
+
+  if (!loadDocument(opts.input_path, error_msg)) return false;
+  if (!processDocument(error_msg)) return false;
+
+  tinyxml2::XMLPrinter printer;
+  doc_->Print(&printer);
+  if (urdf_xml) *urdf_xml = printer.CStr();
+  return true;
+}
+
 bool Processor::loadDocument(const std::string& path, std::string* error_msg) {
   doc_ = new tinyxml2::XMLDocument();
   auto rc = doc_->LoadFile(path.c_str());

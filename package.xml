@@ -7,7 +7,10 @@
   <license>BSD</license>
   <buildtool_depend>ament_cmake</buildtool_depend>
   <build_depend>tinyxml2</build_depend>
+  <build_export_depend>tinyxml2</build_export_depend>
   <exec_depend>tinyxml2</exec_depend>
+
   <build_depend>ament_index_cpp</build_depend>
+  <build_export_depend>ament_index_cpp</build_export_depend>
   <exec_depend>ament_index_cpp</exec_depend>
 </package>

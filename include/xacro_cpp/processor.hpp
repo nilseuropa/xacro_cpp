@@ -42,6 +42,10 @@ public:
   // Runs expansion and returns true on success. Result is serialized to output_path or stdout.
   bool run(const Options& opts, std::string* error_msg);
 
+  // Runs expansion and returns the expanded XML in-memory.
+  // Does not write to stdout. Returns true on success and fills urdf_xml.
+  bool runToString(const Options& opts, std::string* urdf_xml, std::string* error_msg);
+
 private:
   tinyxml2::XMLDocument* doc_ = nullptr; // owned
   std::unordered_map<std::string, std::string> vars_;
