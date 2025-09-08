@@ -538,7 +538,7 @@ bool Processor::run(const Options& opts, std::string* error_msg) {
 
 bool Processor::runToString(const Options& opts, std::string* urdf_xml, std::string* error_msg) {
   base_dir_ = dirname(opts.input_path);
-  vars_.clear(); macros_.clear();
+  vars_.clear(); macros_.clear(); arg_names_.clear();
   for (const auto& kv : opts.cli_args) vars_[kv.first] = kv.second;
 
   detect_current_package_from(base_dir_);
@@ -549,6 +549,27 @@ bool Processor::runToString(const Options& opts, std::string* urdf_xml, std::str
   tinyxml2::XMLPrinter printer;
   doc_->Print(&printer);
   if (urdf_xml) *urdf_xml = printer.CStr();
+  return true;
+}
+
+bool Processor::collectArgs(const Options& opts,
+                            std::map<std::string, std::string>* args_out,
+                            std::string* error_msg) {
+  if (!args_out) return false;
+  args_out->clear();
+  base_dir_ = dirname(opts.input_path);
+  arg_names_.clear();
+  if (!loadDocument(opts.input_path, error_msg)) return false;
+  // initialize argument map with CLI overrides
+  vars_.clear(); macros_.clear();
+  for (const auto& kv : opts.cli_args) vars_[kv.first] = kv.second;
+  // Only collect args and properties; do not expand macros/includes
+  if (!passCollectArgsAndProps(error_msg)) return false;
+  // Copy collected arg values (only those declared via xacro:arg)
+  for (const auto& name : arg_names_) {
+    auto it = vars_.find(name);
+    if (it != vars_.end()) { (*args_out)[name] = it->second; }
+  }
   return true;
 }
 
@@ -637,6 +658,7 @@ bool Processor::defineProperty(const tinyxml2::XMLElement* el) {
 bool Processor::defineArg(const tinyxml2::XMLElement* el) {
   std::string name = getAttr(el, "name");
   std::string def = getAttr(el, "default");
+  if (!name.empty()) arg_names_.insert(name);
   if (vars_.find(name) == vars_.end()) vars_[name] = eval_string_template(def, vars_);
   return true;
 }
