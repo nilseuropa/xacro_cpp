@@ -27,16 +27,9 @@ else()
   set(TINYXML2_TARGET tinyxml2_unknown)
 endif()
 
-add_library(tinyexpr STATIC
-  src/tinyexpr.c
-)
-target_include_directories(tinyexpr PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include>
-)
-
 add_library(xacro_cpp_lib
   src/processor.cpp
+  src/tinyexpr.c
 )
 target_include_directories(xacro_cpp_lib PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -47,18 +40,42 @@ if(TARGET ament_index_cpp::ament_index_cpp)
   target_compile_definitions(xacro_cpp_lib PRIVATE XACRO_HAVE_AMENT_INDEX=1)
   target_link_libraries(xacro_cpp_lib PUBLIC ament_index_cpp::ament_index_cpp)
 endif()
-target_link_libraries(xacro_cpp_lib PRIVATE tinyexpr ${TINYXML2_TARGET})
+target_link_libraries(xacro_cpp_lib PRIVATE ${TINYXML2_TARGET})
+
+# Provide a convenient namespaced alias for consumers
+add_library(xacro_cpp::xacro_cpp ALIAS xacro_cpp_lib)
 
 add_executable(xacro_cpp src/main.cpp)
 target_link_libraries(xacro_cpp PRIVATE xacro_cpp_lib)
 
-install(TARGETS xacro_cpp xacro_cpp_lib tinyexpr
+# Install and export library target for downstream packages
+install(TARGETS xacro_cpp_lib
+  EXPORT xacro_cppTargets
+  LIBRARY DESTINATION lib
+  ARCHIVE DESTINATION lib
+  RUNTIME DESTINATION bin
+)
+
+# The CLI executable is optional for consumers; install without exporting
+install(TARGETS xacro_cpp
   RUNTIME DESTINATION bin
   LIBRARY DESTINATION lib
   ARCHIVE DESTINATION lib
 )
 install(DIRECTORY include/ DESTINATION include)
 
+# Export CMake targets and include dirs for both ament and plain CMake consumers
+install(EXPORT xacro_cppTargets
+  NAMESPACE xacro_cpp::
+  DESTINATION share/${PROJECT_NAME}/cmake
+)
+
 if(ament_cmake_FOUND)
+  # Export interface details for ament consumers
+  ament_export_targets(xacro_cppTargets HAS_LIBRARY_TARGET)
+  ament_export_include_directories(include)
+  if(TARGET ament_index_cpp::ament_index_cpp)
+    ament_export_dependencies(ament_index_cpp)
+  endif()
   ament_package()
 endif()

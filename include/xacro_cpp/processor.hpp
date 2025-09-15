@@ -3,6 +3,8 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <map>
+#include <unordered_set>
 
 namespace tinyxml2 { class XMLDocument; class XMLElement; class XMLNode; }
 
@@ -42,10 +44,22 @@ public:
   // Runs expansion and returns true on success. Result is serialized to output_path or stdout.
   bool run(const Options& opts, std::string* error_msg);
 
+  // Runs expansion and returns the expanded XML in-memory.
+  // Does not write to stdout. Returns true on success and fills urdf_xml.
+  bool runToString(const Options& opts, std::string* urdf_xml, std::string* error_msg);
+
+  // Parses just enough to collect xacro:arg and xacro:property defaults without full expansion.
+  // Returns true and fills args_out with argument names and their default/effective values.
+  // CLI args in opts.cli_args override defaults.
+  bool collectArgs(const Options& opts,
+                   std::map<std::string, std::string>* args_out,
+                   std::string* error_msg);
+
 private:
   tinyxml2::XMLDocument* doc_ = nullptr; // owned
   std::unordered_map<std::string, std::string> vars_;
   std::unordered_map<std::string, MacroDef> macros_;
+  std::unordered_set<std::string> arg_names_;
   std::string base_dir_;
   bool modified_ = false;
   // Minimal YAML store for xacro.load_yaml(name) assigned to properties
