@@ -86,10 +86,25 @@ double eval_number(const std::string& expr,
   static const double s_pi = 3.14159265358979323846;
   storage.push_back(s_pi);
   v.push_back(te_variable{"pi", &storage.back(), TE_VARIABLE, nullptr});
+  auto to_lower = [](std::string s) {
+    for (auto& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return s;
+  };
   for (auto& kv : vars) {
     char* end = nullptr;
     double val = std::strtod(kv.second.c_str(), &end);
-    if (end && *end == '\0') {
+    bool consumed = (end && *end == '\0');
+    if (!consumed) {
+      std::string lowered = to_lower(kv.second);
+      if (lowered == "true") {
+        val = 1.0;
+        consumed = true;
+      } else if (lowered == "false") {
+        val = 0.0;
+        consumed = true;
+      }
+    }
+    if (consumed) {
       storage.push_back(val);
       te_variable t{kv.first.c_str(), &storage.back(), TE_VARIABLE, nullptr};
       v.push_back(t);
@@ -666,18 +681,31 @@ bool Processor::defineArg(const tinyxml2::XMLElement* el) {
 bool Processor::passCollectArgsAndProps(std::string* /*error_msg*/) {
   std::vector<tinyxml2::XMLElement*> remove_args;
   std::vector<tinyxml2::XMLElement*> remove_props;
-  for (auto* el = doc_->RootElement(); el; ) {
-    // Iterate DFS on elements
-    std::vector<tinyxml2::XMLElement*> stack;
-    stack.push_back(doc_->RootElement());
-    while (!stack.empty()) {
-      auto* cur = stack.back(); stack.pop_back();
-      if (isXacroElement(cur, "arg")) { defineArg(cur); remove_args.push_back(cur); }
-      if (isXacroElement(cur, "property")) { defineProperty(cur); remove_props.push_back(cur); }
-      auto* child = cur->LastChildElement();
-      while (child) { stack.push_back(child); child = child->PreviousSiblingElement(); }
+  struct Frame { tinyxml2::XMLElement* el; bool in_macro; };
+  std::vector<Frame> stack;
+  stack.push_back({doc_->RootElement(), false});
+  while (!stack.empty()) {
+    Frame f = stack.back(); stack.pop_back();
+    auto* cur = f.el;
+    bool in_macro = f.in_macro;
+    if (isXacroElement(cur, "arg")) {
+      if (!in_macro) {
+        defineArg(cur);
+        remove_args.push_back(cur);
+      }
     }
-    break;
+    if (isXacroElement(cur, "property")) {
+      if (!in_macro) {
+        defineProperty(cur);
+        remove_props.push_back(cur);
+      }
+    }
+    auto* child = cur->LastChildElement();
+    bool child_in_macro = in_macro || isXacroElement(cur, "macro");
+    while (child) {
+      stack.push_back({child, child_in_macro});
+      child = child->PreviousSiblingElement();
+    }
   }
   // Remove xacro:arg elements from output after collecting
   for (auto* a : remove_args) {
@@ -936,16 +964,49 @@ bool Processor::expandMacroCall(tinyxml2::XMLElement* el) {
             }
           }
         }
+        // Handle xacro:property with local scoping (default) or global override
+        if (isXacroElement(ce, "property")) {
+          std::string pname = getAttr(ce, "name");
+          std::string scope_attr = getAttr(ce, "scope");
+          std::string pval = getAttr(ce, "value");
+          if (pval.empty()) {
+            const char* text = ce->GetText();
+            if (text) pval = text;
+          }
+          pval = eval_string_template(pval, scope);
+          if (!pname.empty()) {
+            if (scope_attr == "global") {
+              vars_[pname] = pval;
+            } else {
+              scope[pname] = pval;
+            }
+          }
+          if (auto* par = ce->Parent()) {
+            par->DeleteChild(ce);
+          }
+          modified_ = true;
+          continue;
+        }
         // Handle xacro:insert_block
         if (isXacroElement(ce, "insert_block")) {
           std::string bname = getAttr(ce, "name");
           auto bit = blocks.find(bname);
           auto* par = ce->Parent();
           if (par) {
+            std::vector<tinyxml2::XMLNode*> inserted_nodes;
             if (bit != blocks.end()) {
-              for (auto* bn : bit->second) insert_before(par, ce, bn->DeepClone(doc_));
+              inserted_nodes.reserve(bit->second.size());
+              for (auto* bn : bit->second) {
+                auto* clone = bn->DeepClone(doc_);
+                insert_before(par, ce, clone);
+                inserted_nodes.push_back(clone);
+              }
             }
             par->DeleteChild(ce);
+            // process newly inserted nodes with the same macro scope
+            for (auto it = inserted_nodes.rbegin(); it != inserted_nodes.rend(); ++it) {
+              if (*it) st.push_back(*it);
+            }
           }
           modified_ = true;
           continue; // done with this node
