@@ -1,0 +1,6 @@
+<?xml version="1.0"?>
+<robot name="xacro_included" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:property name="included_mass" value="5.0"/>
+
+</robot>

@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<robot name="xacro_test_parentheses" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:property name="a" value="10"/>
+  <xacro:property name="b" value="5"/>
+  <xacro:property name="c" value="2"/>
+
+  <!-- Parentheses test -->
+  <xacro:property name="expr1" value="${(a + b) * c}"/>
+  <xacro:property name="expr2" value="${a + (b * c)}"/>
+  <xacro:property name="expr3" value="${(a + b) / c}"/>
+  <xacro:property name="expr4" value="${a + b / c}"/>
+
+  <link name="parentheses_results">
+    <inertial>
+      <mass value="${expr1}"/>
+      <origin xyz="${expr2} ${expr3} ${expr4}" rpy="0 0 0"/>
+    </inertial>
+  </link>
+
+</robot>

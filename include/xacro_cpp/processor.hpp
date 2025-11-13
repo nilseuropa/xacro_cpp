@@ -5,10 +5,16 @@
 #include <vector>
 #include <map>
 #include <unordered_set>
+#include <stdexcept>
 
 namespace tinyxml2 { class XMLDocument; class XMLElement; class XMLNode; }
 
 namespace xacro_cpp {
+
+class ProcessingError : public std::runtime_error {
+public:
+  explicit ProcessingError(const std::string& what_arg) : std::runtime_error(what_arg) {}
+};
 
 struct Options {
   std::string input_path;

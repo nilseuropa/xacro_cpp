@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<robot name="xacro_test" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:property name="a" value="10"/>
+  <xacro:property name="b" value="5"/>
+
+  <xacro:property name="sum" value="${a + b}"/>
+  <xacro:property name="diff" value="${a - b}"/>
+  <xacro:property name="prod" value="${a * b}"/>
+  <xacro:property name="quot" value="${a / b}"/>
+
+  <link name="results">
+    <inertial>
+      <mass value="${sum}"/>
+      <origin xyz="${diff} ${prod} ${quot}" rpy="0 0 0"/>
+    </inertial>
+  </link>
+
+</robot>

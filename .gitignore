@@ -4,3 +4,7 @@ build/ament_cmake_core/
 build/
 
 _cmake_build/
+
+.idea/
+
+test/result_files/

@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<robot name="xacro_test_include_main" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- Include another Xacro file -->
+  <xacro:include filename="./xacro_included.xacro"/>
+
+  <!-- Use a property or macro from the included file -->
+  <xacro:property name="main_scale" value="2.0"/>
+  <xacro:property name="scaled_mass" value="${included_mass * main_scale}"/>
+
+  <link name="include_results">
+    <inertial>
+      <mass value="${scaled_mass}"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+    </inertial>
+  </link>
+
+</robot>

@@ -86,3 +86,28 @@ Examples
 Troubleshooting
 - If a package cannot be found, ensure your ROS environment is sourced so ament index and AMENT_PREFIX_PATH are available. The source‑tree fallback covers typical dev layouts under …/src.
 - If mutually exclusive branches both appear, check the conditional expression uses values available in that scope; string comparisons should be of the form ${side == 'left'} (quoted when ambiguous).
+
+### Tests
+
+The `test/test_xacro_parsing.cpp` fixture parses each sample with both Python `xacro` and this C++ port, then diff-checks the generated XML with a small Python script. The samples under `test/test_files/` cover expression evaluation, includes, conditionals, macros (including block parameters), YAML loading, and failure modes like duplicate symbols or broken includes.
+
+#### Running the suite
+
+1. Source your ROS 2 distro and a Python env that has `xacro` + deps:
+   ```bash
+   source /opt/ros/<distro>/setup.bash
+   python3 -m pip install --user xacro catkin_pkg
+   ```
+2. Build with testing enabled:
+   ```bash
+   colcon build --packages-select xacro_cpp --cmake-args -DBUILD_TESTING=ON
+   source install/setup.bash
+   ```
+3. Run either via ROS 2:
+   ```bash
+   ros2 run xacro_cpp test_xacro_parsing
+   ```
+   or with `colcon test`:
+   ```bash
+   colcon test --packages-select xacro_cpp --event-handlers console_direct+ --ctest-args -V
+   ```

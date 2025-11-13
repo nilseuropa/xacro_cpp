@@ -1,0 +1,30 @@
+<?xml version="1.0"?>
+<robot name="xacro_test_macros" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:property name="global_scale" value="2.0"/>
+
+  <xacro:macro name="link_with_cross" params="label base:=1.0 scale:=${base*global_scale}">
+    <link name="${label}">
+      <inertial>
+        <mass value="${base * scale}"/>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+      </inertial>
+    </link>
+  </xacro:macro>
+
+  <xacro:macro name="optional_link" params="label mass:=0.5">
+    <link name="${label}">
+      <inertial>
+        <mass value="${mass}"/>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+      </inertial>
+    </link>
+  </xacro:macro>
+
+  <xacro:link_with_cross label="link_auto"/>
+  <xacro:link_with_cross label="link_override" base="3.0" scale="1.5"/>
+
+  <xacro:optional_link label="optional_default"/>
+  <xacro:optional_link label="optional_custom" mass="${global_scale + 1}"/>
+
+</robot>

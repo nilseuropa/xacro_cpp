@@ -14,6 +14,10 @@
 #include <vector>
 #include <algorithm>
 #include <system_error>
+#include <stdexcept>
+#include <cmath>
+#include <limits>
+#include <unordered_set>
 #if __has_include(<filesystem>)
   #include <filesystem>
   namespace fs = std::filesystem;
@@ -37,6 +41,78 @@ static std::string dirname(const std::string& path) {
 // Current-package fallback for ${find('pkg')} when ament index is unavailable.
 static std::string g_current_pkg_name;
 static std::string g_current_pkg_root;
+
+namespace {
+
+inline bool is_escaped(const std::string& text, size_t idx) {
+  if (idx == 0) return false;
+  size_t backslash_count = 0;
+  size_t pos = idx;
+  while (pos > 0 && text[--pos] == '\\') {
+    ++backslash_count;
+  }
+  return (backslash_count % 2) == 1;
+}
+
+static void ensure_balanced_quotes(const std::string& expr) {
+  bool in_single = false;
+  bool in_double = false;
+  for (size_t i = 0; i < expr.size(); ++i) {
+    char c = expr[i];
+    if (c == '\'' && !in_double && !is_escaped(expr, i)) {
+      in_single = !in_single;
+    } else if (c == '"' && !in_single && !is_escaped(expr, i)) {
+      in_double = !in_double;
+    }
+  }
+  if (in_single || in_double) {
+    throw ProcessingError("Unterminated string literal inside expression: " + expr);
+  }
+}
+
+static void ensure_no_pow_operator(const std::string& expr) {
+  bool in_single = false;
+  bool in_double = false;
+  for (size_t i = 0; i + 1 < expr.size(); ++i) {
+    char c = expr[i];
+    if (c == '\'' && !in_double && !is_escaped(expr, i)) {
+      in_single = !in_single;
+      continue;
+    }
+    if (c == '"' && !in_single && !is_escaped(expr, i)) {
+      in_double = !in_double;
+      continue;
+    }
+    if (!in_single && !in_double && c == '*' && expr[i + 1] == '*') {
+      throw ProcessingError("Unsupported operator '**' in expression: " + expr);
+    }
+  }
+}
+
+static void validate_expression_chunk(const std::string& expr) {
+  if (expr.empty()) return;
+  ensure_balanced_quotes(expr);
+  ensure_no_pow_operator(expr);
+}
+
+[[noreturn]] void throw_processing_error(const std::string& message) {
+  if (message.empty()) {
+    throw ProcessingError("xacro_cpp processing failed");
+  }
+  throw ProcessingError(message);
+}
+
+inline void throw_from_error_msg(std::string* error_msg, const char* fallback) {
+  if (error_msg) {
+    if (error_msg->empty() && fallback) {
+      *error_msg = fallback;
+    }
+    throw_processing_error(*error_msg);
+  }
+  throw_processing_error(fallback ? std::string(fallback) : std::string());
+}
+
+} // namespace
 
 static void detect_current_package_from(const std::string& start_dir) {
   g_current_pkg_name.clear();
@@ -120,6 +196,10 @@ double eval_number(const std::string& expr,
   }
   double res = te_eval(comp);
   te_free(comp);
+  if (!std::isfinite(res)) {
+    if (ok) *ok = false;
+    throw ProcessingError("division by zero when evaluating expression '" + expr + "'");
+  }
   if (ok) *ok = true;
   return res;
 }
@@ -216,6 +296,95 @@ static std::string strip_quotes(const std::string& s) {
   return s;
 }
 
+static std::string trim_copy(const std::string& s) {
+  size_t i = 0, j = s.size();
+  while (i < j && std::isspace(static_cast<unsigned char>(s[i]))) ++i;
+  while (j > i && std::isspace(static_cast<unsigned char>(s[j - 1]))) --j;
+  return s.substr(i, j - i);
+}
+
+static bool is_simple_identifier(const std::string& s) {
+  if (s.empty()) return false;
+  if (!(std::isalpha(static_cast<unsigned char>(s[0])) || s[0] == '_')) return false;
+  for (size_t i = 1; i < s.size(); ++i) {
+    char c = s[i];
+    if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '_')) return false;
+  }
+  return true;
+}
+
+static bool has_unknown_identifier(const std::string& expr,
+                                   const std::unordered_map<std::string, std::string>& vars) {
+  static const std::unordered_set<std::string> kBuiltins = {
+    "sin","cos","tan","asin","acos","atan","atan2","sqrt","abs","ln","log","exp",
+    "floor","ceil","round","trunc","sinh","cosh","tanh","pow","min","max","pi","true","false"
+  };
+  bool in_single = false;
+  bool in_double = false;
+  for (size_t i = 0; i < expr.size();) {
+    char c = expr[i];
+    if (c == '\'' && !in_double && !is_escaped(expr, i)) { in_single = !in_single; ++i; continue; }
+    if (c == '"' && !in_single && !is_escaped(expr, i)) { in_double = !in_double; ++i; continue; }
+    if (in_single || in_double) { ++i; continue; }
+    if (std::isalpha(static_cast<unsigned char>(c)) || c == '_') {
+      size_t j = i + 1;
+      while (j < expr.size()) {
+        char cj = expr[j];
+        if (std::isalnum(static_cast<unsigned char>(cj)) || cj == '_') ++j;
+        else break;
+      }
+      std::string ident = expr.substr(i, j - i);
+      if (!kBuiltins.count(ident) && vars.find(ident) == vars.end()) {
+        return true;
+      }
+      i = j;
+    } else {
+      ++i;
+    }
+  }
+  return false;
+}
+
+static bool split_list_literal(const std::string& expr, std::vector<std::string>* items) {
+  if (!items) return false;
+  std::string trimmed = trim_copy(expr);
+  if (trimmed.size() < 2 || trimmed.front() != '[' || trimmed.back() != ']') return false;
+
+  std::string inner = trimmed.substr(1, trimmed.size() - 2);
+  std::vector<std::string> tokens;
+  std::string current;
+  int depth = 0;
+  bool in_single = false;
+  bool in_double = false;
+  auto flush = [&]() {
+    std::string token = trim_copy(current);
+    if (!token.empty()) tokens.push_back(token);
+    current.clear();
+  };
+  for (size_t idx = 0; idx < inner.size(); ++idx) {
+    char c = inner[idx];
+    if (c == ',' && depth == 0 && !in_single && !in_double) {
+      flush();
+      continue;
+    }
+    current.push_back(c);
+    if (c == '\'' && !in_double && !is_escaped(inner, idx)) {
+      in_single = !in_single;
+    } else if (c == '"' && !in_single && !is_escaped(inner, idx)) {
+      in_double = !in_double;
+    } else if (!in_single && !in_double) {
+      if (c == '[' || c == '{' || c == '(') ++depth;
+      else if (c == ']' || c == '}' || c == ')') {
+        if (depth > 0) --depth;
+      }
+    }
+  }
+  if (in_single || in_double || depth != 0) return false;
+  flush();
+  *items = tokens;
+  return true;
+}
+
 // Replace occurrences of name[index] with the indexed token from vars[name]
 static std::string replace_indexing_with_values(const std::string& expr,
                                                 const std::unordered_map<std::string, std::string>& vars) {
@@ -232,13 +401,20 @@ static std::string replace_indexing_with_values(const std::string& expr,
       std::string value;
       auto it = vars.find(name);
       if (it != vars.end()) {
-        // split by whitespace
-        std::istringstream iss(it->second);
-        std::vector<std::string> tokens; std::string tok;
-        while (iss >> tok) tokens.push_back(tok);
+        std::vector<std::string> tokens;
+        if (!split_list_literal(it->second, &tokens)) {
+          std::istringstream iss(it->second);
+          std::string tok;
+          while (iss >> tok) {
+            while (!tok.empty() && (tok.back() == ',' || tok.back() == ';')) {
+              tok.pop_back();
+            }
+            if (!tok.empty()) tokens.push_back(tok);
+          }
+        }
         if (idx < tokens.size()) value = tokens[idx];
       }
-      result += value;
+      result += strip_quotes(trim_copy(value));
       searchStart = m.suffix().first;
     }
     result.append(searchStart, s.cend());
@@ -421,14 +597,26 @@ bool Processor::isXacroElement(const tinyxml2::XMLElement* el, const char* local
 }
 
 std::string eval_string_with_vars(const std::string& expr,
-                                  const std::unordered_map<std::string, std::string>& vars) {
+                                  const std::unordered_map<std::string, std::string>& vars,
+                                  bool* resolved = nullptr) {
+  if (resolved) *resolved = false;
   // Prefer exact variable replacement in the given scope first
   auto it = vars.find(expr);
-  if (it != vars.end()) return it->second;
+  if (it != vars.end()) {
+    if (resolved) *resolved = true;
+    return it->second;
+  }
+  if (is_simple_identifier(expr)) {
+    return expr;
+  }
+  if (has_unknown_identifier(expr, vars)) {
+    return expr;
+  }
   // Else, if numeric expression, evaluate
   bool ok = false;
   double num = eval_number(expr, vars, &ok);
   if (ok) {
+    if (resolved) *resolved = true;
     std::ostringstream oss; oss << num; return oss.str();
   }
   return expr; // leave as-is
@@ -454,8 +642,38 @@ std::string eval_string_template(const std::string& text,
         if (depth == 0) break;
         ++j;
       }
+      if (j >= text.size() || text[j] != '}') {
+        std::string snippet = text.substr(i, std::min<size_t>(text.size() - i, 80));
+        throw ProcessingError("Unterminated ${...} expression near: " + snippet);
+      }
       if (j < text.size() && text[j] == '}') {
+        std::string raw_expr = text.substr(i, j - i + 1);
         std::string expr = trim_str(text.substr(i + 2, j - (i + 2)));
+        validate_expression_chunk(expr);
+        // Handle inline list literals like [a, b, c]
+        std::vector<std::string> list_expr_items;
+        if (split_list_literal(expr, &list_expr_items)) {
+          bool list_resolved = true;
+          std::ostringstream oss;
+          oss << "[";
+          for (size_t idx_item = 0; idx_item < list_expr_items.size(); ++idx_item) {
+            std::string item_expr = replace_indexing_with_values(list_expr_items[idx_item], vars);
+            bool item_resolved = false;
+            std::string item_val = eval_string_with_vars(trim_copy(item_expr), vars, &item_resolved);
+            if (!item_resolved) {
+              list_resolved = false;
+              break;
+            }
+            if (idx_item) oss << ", ";
+            oss << item_val;
+          }
+          if (list_resolved) {
+            oss << "]";
+            out += oss.str();
+            i = j + 1;
+            continue;
+          }
+        }
         // Handle find('pkg') or find("pkg") or find(pkg)
         if (expr.rfind("find", 0) == 0) {
           std::string inside;
@@ -470,9 +688,14 @@ std::string eval_string_template(const std::string& text,
           i = j + 1;
           continue;
         }
-        std::string ex2 = replace_indexing_with_values(expr, vars);
-        std::string val = eval_string_with_vars(ex2, vars);
-        out += val;
+          std::string ex2 = replace_indexing_with_values(expr, vars);
+        bool resolved = false;
+        std::string val = eval_string_with_vars(ex2, vars, &resolved);
+        if (!resolved) {
+          out += raw_expr;
+        } else {
+          out += val;
+        }
         i = j + 1;
         continue;
       }
@@ -517,10 +740,15 @@ std::string eval_string_template(const std::string& text,
       searchStart = m.suffix().first;
     }
     result.append(searchStart, s.cend());
-    return result;
+    out = std::move(result);
   } catch (...) {
-    return out;
+    // leave 'out' untouched
   }
+
+  if (out.find("$(") != std::string::npos) {
+    throw ProcessingError("Unsupported substitution pattern in: " + out);
+  }
+  return out;
 }
 
 Processor::Processor() {}
@@ -534,8 +762,12 @@ bool Processor::run(const Options& opts, std::string* error_msg) {
   // Detect current package for ${find('<this_pkg>')} fallback in source trees.
   detect_current_package_from(base_dir_);
 
-  if (!loadDocument(opts.input_path, error_msg)) return false;
-  if (!processDocument(error_msg)) return false;
+  if (!loadDocument(opts.input_path, error_msg)) {
+    throw_from_error_msg(error_msg, "Failed to load XML");
+  }
+  if (!processDocument(error_msg)) {
+    throw_from_error_msg(error_msg, "Failed to process document");
+  }
 
   tinyxml2::XMLPrinter printer;
   doc_->Print(&printer);
@@ -545,7 +777,10 @@ bool Processor::run(const Options& opts, std::string* error_msg) {
     std::cout << result;
   } else {
     std::ofstream ofs(opts.output_path);
-    if (!ofs) { if (error_msg) *error_msg = "Failed to write output"; return false; }
+    if (!ofs) {
+      if (error_msg) *error_msg = "Failed to write output";
+      throw_from_error_msg(error_msg, "Failed to write output");
+    }
     ofs << result;
   }
   return true;
@@ -558,8 +793,12 @@ bool Processor::runToString(const Options& opts, std::string* urdf_xml, std::str
 
   detect_current_package_from(base_dir_);
 
-  if (!loadDocument(opts.input_path, error_msg)) return false;
-  if (!processDocument(error_msg)) return false;
+  if (!loadDocument(opts.input_path, error_msg)) {
+    throw_from_error_msg(error_msg, "Failed to load XML");
+  }
+  if (!processDocument(error_msg)) {
+    throw_from_error_msg(error_msg, "Failed to process document");
+  }
 
   tinyxml2::XMLPrinter printer;
   doc_->Print(&printer);
@@ -574,12 +813,16 @@ bool Processor::collectArgs(const Options& opts,
   args_out->clear();
   base_dir_ = dirname(opts.input_path);
   arg_names_.clear();
-  if (!loadDocument(opts.input_path, error_msg)) return false;
+  if (!loadDocument(opts.input_path, error_msg)) {
+    throw_from_error_msg(error_msg, "Failed to load XML");
+  }
   // initialize argument map with CLI overrides
   vars_.clear(); macros_.clear();
   for (const auto& kv : opts.cli_args) vars_[kv.first] = kv.second;
   // Only collect args and properties; do not expand macros/includes
-  if (!passCollectArgsAndProps(error_msg)) return false;
+  if (!passCollectArgsAndProps(error_msg)) {
+    throw_from_error_msg(error_msg, "Failed to collect args and properties");
+  }
   // Copy collected arg values (only those declared via xacro:arg)
   for (const auto& name : arg_names_) {
     auto it = vars_.find(name);
@@ -620,6 +863,21 @@ bool Processor::defineProperty(const tinyxml2::XMLElement* el) {
     if (text) value = text;
   }
   value = eval_string_template(value, vars_);
+  // Normalize simple list literals so later indexing sees evaluated entries.
+  if (!value.empty()) {
+    std::vector<std::string> list_items;
+    if (split_list_literal(value, &list_items)) {
+      std::ostringstream oss;
+      oss << "[";
+      for (size_t i = 0; i < list_items.size(); ++i) {
+        std::string resolved = Processor::trim(eval_string_with_vars(list_items[i], vars_));
+        if (i) oss << ", ";
+        oss << resolved;
+      }
+      oss << "]";
+      value = oss.str();
+    }
+  }
   // Handle xacro.load_yaml(file)
   {
     std::smatch m;
@@ -666,7 +924,9 @@ bool Processor::defineProperty(const tinyxml2::XMLElement* el) {
       return true;
     }
   }
-  if (!name.empty()) vars_[name] = value;
+  if (!name.empty()) {
+    vars_[name] = value;
+  }
   return true;
 }
 
@@ -681,29 +941,36 @@ bool Processor::defineArg(const tinyxml2::XMLElement* el) {
 bool Processor::passCollectArgsAndProps(std::string* /*error_msg*/) {
   std::vector<tinyxml2::XMLElement*> remove_args;
   std::vector<tinyxml2::XMLElement*> remove_props;
-  struct Frame { tinyxml2::XMLElement* el; bool in_macro; };
+  struct Frame { tinyxml2::XMLElement* el; bool in_macro; bool in_conditional; };
   std::vector<Frame> stack;
-  stack.push_back({doc_->RootElement(), false});
+  stack.push_back({doc_->RootElement(), false, false});
   while (!stack.empty()) {
     Frame f = stack.back(); stack.pop_back();
     auto* cur = f.el;
     bool in_macro = f.in_macro;
+    bool in_conditional = f.in_conditional;
     if (isXacroElement(cur, "arg")) {
-      if (!in_macro) {
+      if (!in_macro && !in_conditional) {
         defineArg(cur);
         remove_args.push_back(cur);
       }
     }
     if (isXacroElement(cur, "property")) {
-      if (!in_macro) {
+      if (!in_macro && !in_conditional) {
         defineProperty(cur);
         remove_props.push_back(cur);
       }
     }
     auto* child = cur->LastChildElement();
     bool child_in_macro = in_macro || isXacroElement(cur, "macro");
+    bool child_in_conditional = in_conditional ||
+                                isXacroElement(cur, "if") ||
+                                isXacroElement(cur, "unless") ||
+                                isXacroElement(cur, "else") ||
+                                isXacroElement(cur, "elseif") ||
+                                isXacroElement(cur, "elif");
     while (child) {
-      stack.push_back({child, child_in_macro});
+      stack.push_back({child, child_in_macro, child_in_conditional});
       child = child->PreviousSiblingElement();
     }
   }
@@ -858,12 +1125,17 @@ bool Processor::handleIfUnless(tinyxml2::XMLElement* el, std::vector<tinyxml2::X
     bool val = eval_bool(cond_eval, vars_);
     if (isXacroElement(el, "unless")) val = !val;
     auto* parent = el->Parent();
-    if (!val) { parent->DeleteChild(el); return true; }
+    if (!val) {
+      if (parent) parent->DeleteChild(el);
+      modified_ = true;
+      return true;
+    }
     // True: splice children
     std::vector<tinyxml2::XMLNode*> cloned;
     for (auto* c = el->FirstChild(); c; c = c->NextSibling()) cloned.push_back(c->DeepClone(doc_));
     for (auto* n : cloned) insert_before(parent, el, n);
     parent->DeleteChild(el);
+    modified_ = true;
     if (inserted_out) inserted_out->insert(inserted_out->end(), cloned.begin(), cloned.end());
     return true;
   }

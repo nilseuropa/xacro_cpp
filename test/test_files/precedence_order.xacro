@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<robot name="xacro_test_precedence" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:property name="a" value="2"/>
+  <xacro:property name="b" value="3"/>
+  <xacro:property name="c" value="4"/>
+  <xacro:property name="d" value="5"/>
+
+  <!-- Operator precedence tests -->
+  <xacro:property name="expr1" value="${a + b * c}"/>      <!-- multiplication before addition -->
+  <xacro:property name="expr2" value="${(a + b) * c}"/>    <!-- parentheses override precedence -->
+  <xacro:property name="expr3" value="${a * b + c / d}"/>  <!-- * and / before + -->
+  <xacro:property name="expr4" value="${a * (b + c) / d}"/> <!-- parentheses first, then *, / -->
+
+  <link name="precedence_results">
+    <inertial>
+      <mass value="${expr1}"/>
+      <origin xyz="${expr2} ${expr3} ${expr4}" rpy="0 0 0"/>
+    </inertial>
+  </link>
+
+</robot>

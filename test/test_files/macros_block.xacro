@@ -1,0 +1,30 @@
+<?xml version="1.0"?>
+<robot name="xacro_test_macro_blocks" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:macro name="wrap_with_block" params="name *payload">
+    <link name="${name}">
+      <xacro:insert_block name="payload"/>
+    </link>
+  </xacro:macro>
+
+  <xacro:wrap_with_block name="block_link_one">
+    <payload>
+      <inertial>
+        <mass value="1.0"/>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+      </inertial>
+    </payload>
+  </xacro:wrap_with_block>
+
+  <xacro:wrap_with_block name="block_link_two">
+    <payload>
+      <visual>
+        <geometry>
+          <box size="1 1 1"/>
+        </geometry>
+        <origin xyz="0 0 1" rpy="0 0 0"/>
+      </visual>
+    </payload>
+  </xacro:wrap_with_block>
+
+</robot>

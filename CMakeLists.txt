@@ -70,6 +70,31 @@ install(EXPORT xacro_cppTargets
   DESTINATION share/${PROJECT_NAME}/cmake
 )
 
+
+
+if(BUILD_TESTING)
+  find_package(pybind11 REQUIRED)
+  find_package(Python3 COMPONENTS Interpreter Development REQUIRED)
+  find_package(GTest REQUIRED)
+
+  add_executable(test_xacro_parsing test/test_xacro_parsing.cpp)
+  target_link_libraries(test_xacro_parsing PRIVATE pybind11::embed Python3::Python gtest xacro_cpp_lib)
+  target_include_directories(test_xacro_parsing PRIVATE include)
+
+  add_test(NAME test_xacro_parsing
+          COMMAND ${CMAKE_BINARY_DIR}/test_xacro_parsing
+  )
+
+  target_compile_definitions(test_xacro_parsing PRIVATE TEST_FILES_PATH="${CMAKE_CURRENT_SOURCE_DIR}/test/test_files/")
+  target_compile_definitions(test_xacro_parsing PRIVATE TEST_RESULTS_PATH="${CMAKE_CURRENT_SOURCE_DIR}/test/result_files/")
+
+  gtest_discover_tests(test_xacro_parsing)
+
+  install(TARGETS test_xacro_parsing
+          DESTINATION lib/${PROJECT_NAME})
+endif()
+
+
 if(ament_cmake_FOUND)
   # Export interface details for ament consumers
   ament_export_targets(xacro_cppTargets HAS_LIBRARY_TARGET)

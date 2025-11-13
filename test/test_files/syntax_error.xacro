@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<robot name="xacro_test_syntax" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:property name="a" value="10"/>
+  <xacro:property name="b" value="5"/>
+
+  <!-- Intentional syntax errors -->
+  <xacro:property name="missing_brace" value="${a + b"/>   <!-- missing closing brace -->
+  <xacro:property name="invalid_operator" value="${a ** b}"/> <!-- unsupported operator ** in some xacro versions -->
+  <xacro:property name="unterminated_string" value="${'test}"/> <!-- unterminated string -->
+
+  <link name="syntax_results">
+    <inertial>
+      <mass value="${a}"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+    </inertial>
+  </link>
+
+</robot>

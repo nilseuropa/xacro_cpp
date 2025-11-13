@@ -29,10 +29,13 @@ int main(int argc, char** argv) {
 
   Processor p;
   std::string err;
-  if (!p.run(opts, &err)) {
-    std::cerr << "xacro_cpp error: " << err << "\n";
-    return 2;
+  try {
+    p.run(opts, &err);
+    return 0;
+  } catch (const xacro_cpp::ProcessingError& e) {
+    std::cerr << "xacro_cpp error: " << e.what() << "\n";
+  } catch (const std::exception& e) {
+    std::cerr << "xacro_cpp unexpected error: " << e.what() << "\n";
   }
-  return 0;
+  return 2;
 }
-

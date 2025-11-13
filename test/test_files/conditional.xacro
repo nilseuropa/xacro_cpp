@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<robot name="xacro_test_conditionals" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:property name="use_alt" value="true"/>
+  <xacro:property name="mass_main" value="1.0"/>
+  <xacro:property name="mass_alt" value="2.0"/>
+
+  <!-- Conditional block test -->
+  <xacro:if value="${use_alt}">
+    <xacro:property name="selected_mass" value="${mass_alt}"/>
+  </xacro:if>
+  <xacro:unless value="${use_alt}">
+    <xacro:property name="selected_mass" value="${mass_main}"/>
+  </xacro:unless>
+
+  <link name="conditional_results">
+    <inertial>
+      <mass value="${selected_mass}"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+    </inertial>
+  </link>
+
+</robot>

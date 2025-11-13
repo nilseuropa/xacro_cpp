@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<robot name="xacro_test_include_failure" xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:include filename="./does_not_exist.xacro"/>
+  <link name="include_failure_results">
+    <inertial>
+      <mass value="1"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+    </inertial>
+  </link>
+</robot>

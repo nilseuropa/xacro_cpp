@@ -1,0 +1,11 @@
+<?xml version="1.0"?>
+<robot name="xacro_test_duplicate_property" xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:property name="mass_value" value="5.0"/>
+  <xacro:property name="mass_value" value="10.0"/>
+  <link name="dup_property_results">
+    <inertial>
+      <mass value="${mass_value}"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+    </inertial>
+  </link>
+</robot>

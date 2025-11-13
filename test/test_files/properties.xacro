@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<robot name="xacro_test_properties" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- Simple properties -->
+  <xacro:property name="base_length" value="1.0"/>
+
+  <!-- Grouped via naming -->
+  <xacro:property name="dim_width" value="0.5"/>
+  <xacro:property name="dim_height" value="0.25"/>
+  <xacro:property name="dim_depth" value="0.75"/>
+
+  <!-- Use them -->
+  <xacro:property name="volume" value="${dim_width * dim_height * dim_depth}"/>
+  <xacro:property name="scaled_length" value="${base_length * 2.0}"/>
+
+  <link name="property_results">
+    <inertial>
+      <mass value="${volume}"/>
+      <origin xyz="${scaled_length} ${dim_width} ${dim_height}" rpy="0 0 0"/>
+    </inertial>
+  </link>
+
+</robot>

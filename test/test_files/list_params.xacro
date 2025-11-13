@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<robot name="xacro_test_param_list" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- Define multiple parameters -->
+  <xacro:property name="param1" value="1.0"/>
+  <xacro:property name="param2" value="2.0"/>
+  <xacro:property name="param3" value="3.0"/>
+
+  <!-- Store them in a list -->
+  <xacro:property name="param_list" value="${[param1, param2, param3]}"/>
+
+  <!-- Access elements -->
+  <xacro:property name="first" value="${param_list[0]}"/>
+  <xacro:property name="second" value="${param_list[1]}"/>
+  <xacro:property name="third" value="${param_list[2]}"/>
+
+  <link name="param_list_results">
+    <inertial>
+      <mass value="${first}"/>
+      <origin xyz="${second} ${third} 0" rpy="0 0 0"/>
+    </inertial>
+  </link>
+
+</robot>

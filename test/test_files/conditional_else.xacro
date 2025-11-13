@@ -1,0 +1,26 @@
+<?xml version="1.0"?>
+<robot name="xacro_test_conditional_else" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:property name="is_first" value="false"/>
+  <xacro:property name="is_middle" value="true"/>
+
+  <xacro:if value="${is_first}">
+    <xacro:property name="selected" value="1"/>
+  </xacro:if>
+  <xacro:unless value="${is_first}">
+    <xacro:if value="${is_middle}">
+      <xacro:property name="selected" value="2"/>
+    </xacro:if>
+    <xacro:unless value="${is_middle}">
+      <xacro:property name="selected" value="3"/>
+    </xacro:unless>
+  </xacro:unless>
+
+  <link name="conditional_else_results">
+    <inertial>
+      <mass value="${selected}"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+    </inertial>
+  </link>
+
+</robot>

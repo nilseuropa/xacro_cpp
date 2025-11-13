@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<robot name="xacro_test_macros" xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <link name="link_auto">
+    <inertial>
+      <mass value="2"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+    </inertial>
+  </link>
+  <link name="link_override">
+    <inertial>
+      <mass value="4.5"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+    </inertial>
+  </link>
+  <link name="optional_default">
+    <inertial>
+      <mass value="0.5"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+    </inertial>
+  </link>
+  <link name="optional_custom">
+    <inertial>
+      <mass value="3"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+    </inertial>
+  </link>
+</robot>

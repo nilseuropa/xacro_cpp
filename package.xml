@@ -13,4 +13,8 @@
   <build_depend>ament_index_cpp</build_depend>
   <build_export_depend>ament_index_cpp</build_export_depend>
   <exec_depend>ament_index_cpp</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
 </package>
