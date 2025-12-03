@@ -1,0 +1,3 @@
+<a xmlns:xacro="http://www.ros.org/wiki/xacro">
+    <xacro:macro name="foo" params="a='1 -2' c=3"><bar a="${a}" c="${c}"/></xacro:macro>
+    <xacro:foo/></a>

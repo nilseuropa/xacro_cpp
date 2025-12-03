@@ -1,0 +1,8 @@
+<a xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:macro name="foo" params="factor">
+    <xacro:macro name="bar">
+      <xacro:property name="foo" value="${21*factor}" scope="global"/>
+    </xacro:macro>
+    <xacro:bar/>
+  </xacro:macro>
+  <xacro:foo factor="2"/><a foo="${foo}"/></a>

@@ -1,0 +1,7 @@
+<a xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:macro name="foo" params="name value">
+  <tag><xacro:attribute name="${name}" value="${value}"/></tag>
+  </xacro:macro>
+  <xacro:foo name="A" value="foo"/>
+  <xacro:foo name="B" value="bar"/>
+</a>

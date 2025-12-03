@@ -1,0 +1,6 @@
+<a xmlns:xacro="http://www.ros.org/xacro">
+  <xacro:macro name="foo" params="a b:=${a} c:=$${a}"> a=${a} b=${b} c=${c} </xacro:macro>
+  <xacro:property name="a" value="1"/>
+  <xacro:property name="d" value="$${a}"/>
+  <d d="${d}"><xacro:foo a="2"/></d>
+</a>

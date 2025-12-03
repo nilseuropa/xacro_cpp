@@ -1,0 +1,62 @@
+Checks: >
+    -*,
+    bugprone-use-after-move,
+    bugprone-undelegated-constructor,
+    cppcoreguidelines-no-malloc,
+    cppcoreguidelines-pro-type-member-init,
+    cppcoreguidelines-pro-type-vararg,
+    cppcoreguidelines-pro-bounds-array-to-pointer-decay,
+    cppcoreguidelines-special-member-functions,
+    google-explicit-constructor,
+    hicpp-*,
+    modernize-avoid-c-arrays,
+    modernize-deprecated-headers,
+    modernize-deprecated-ios-base-aliases,
+    modernize-loop-convert,
+    modernize-make-shared,
+    modernize-make-unique,
+    modernize-pass-by-value,
+    modernize-replace-auto-ptrmodernize-use-auto,
+    modernize-use-bool-literals,
+    modernize-use-default-member-init,
+    modernize-use-emplace,
+    modernize-use-equals-default,
+    modernize-use-equals-delete,
+    modernize-use-noexcept,
+    modernize-use-nullptr,
+    modernize-use-override,
+    performance-move-const-arg,
+    performance-noexcept-move-constructor,
+    readability-braces-around-statements,
+    readability-named-parameter,
+    readability-function-size,
+    readability-uppercase-literal-suffix,
+    readability-identifier-naming,
+    readability-implicit-bool-conversion
+
+HeaderFilterRegex:   '.*'
+
+CheckOptions:
+  - { key: readability-identifier-naming.NamespaceCase,            value: lower_case}
+  - { key: readability-identifier-naming.ClassCase,                value: CamelCase }
+  - { key: readability-identifier-naming.StructCase,               value: CamelCase }
+  - { key: readability-identifier-naming.TemplateParameterCase,    value: CamelCase }
+  - { key: readability-identifier-naming.FunctionCase,             value: camelBack }
+  - { key: readability-identifier-naming.VariableCase,             value: camelBack }
+  - { key: readability-identifier-naming.ClassMemberCase,          value: CamelCase }
+  - { key: readability-identifier-naming.ClassMemberPrefix,        value: m         }
+  - { key: readability-identifier-naming.PrivateMemberPrefix,      value: m         }
+  - { key: readability-identifier-naming.ProtectedMemberPrefix,    value: m         }
+  - { key: readability-identifier-naming.PublicMemberPrefix,       value: m         }
+  - { key: readability-identifier-naming.EnumConstantCase,         value: CamelCase }
+  - { key: readability-identifier-naming.EnumConstantPrefix,       value: c         }
+  - { key: readability-identifier-naming.ConstexprVariableCase,    value: CamelCase }
+  - { key: readability-identifier-naming.ConstexprVariablePrefix,  value: c         }
+  - { key: readability-identifier-naming.GlobalConstantCase,       value: CamelCase }
+  - { key: readability-identifier-naming.GlobalConstantPrefix,     value: c         }
+  - { key: readability-identifier-naming.ConstantMemberCase,       value: CamelCase }
+  - { key: readability-identifier-naming.ConstantMemberPrefix,     value: c         }
+  - { key: readability-identifier-naming.StaticConstantCase,       value: CamelCase }
+  - { key: readability-identifier-naming.StaticConstantPrefix,     value: c         }
+  - { key: readability-identifier-naming.GlobalPointerCase,        value: CamelCase }
+  - { key: readability-identifier-naming.GlobalPointerPrefix,      value: g         }

@@ -1,0 +1,7 @@
+<a xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:property name="cfg" value="${xacro.load_yaml('settings.yaml')}"/>
+  ${cfg['keys']['this']}
+  ${cfg['keys']['that']}
+  ${cfg['list1']}
+  ${cfg['list1'][2]}
+</a>

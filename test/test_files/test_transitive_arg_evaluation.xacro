@@ -1,0 +1,6 @@
+<a xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:arg name="foo" default="0.5"/>
+  <xacro:arg name="bar" default="$(arg foo)"/>
+  <xacro:property name="prop" value="$(arg bar)" />
+  <a prop="${prop-0.3}"/>
+</a>

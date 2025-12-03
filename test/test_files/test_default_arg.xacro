@@ -1,0 +1,6 @@
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:arg name="foo" default="2"/>
+  <link name="my_link">
+    <origin xyz="0 0 $(arg foo)"/>
+  </link>
+</robot>

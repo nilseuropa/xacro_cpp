@@ -1,0 +1,7 @@
+<a xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:property name="var" value="main"/>
+  <xacro:include filename="include1.xacro" ns="A"/>
+  <xacro:include filename="include2.xacro" ns="B"/>
+  <xacro:A.foo/><xacro:B.foo/>
+  <main var="${var}" A="${2*A.var}" B="${B.var+1}"/>
+</a>

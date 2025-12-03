@@ -1,0 +1,4 @@
+<a xmlns:xacro="http://www.ros.org/wiki/xacro">
+<xacro:property name="s" value="AbCd"/>
+<xacro:property name="s" value="abcd" lazy_eval="false"/>
+${s}</a>

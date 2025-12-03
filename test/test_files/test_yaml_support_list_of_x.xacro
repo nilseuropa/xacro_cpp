@@ -1,0 +1,4 @@
+<a xmlns:xacro="http://www.ros.org/wiki/xacro">
+      <xacro:property name="l" value="${xacro.load_yaml('list.yaml')}"/>
+      ${l[0][1]} ${l[1][0]} ${l[2].a.A} ${l[2].a.B[0]} ${l[2].a.B[1]} ${l[2].b[0]}
+    </a>

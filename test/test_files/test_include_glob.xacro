@@ -1,0 +1,1 @@
+<a xmlns:xacro="http://www.ros.org/xacro"><xacro:include filename="include*.xml"/></a>

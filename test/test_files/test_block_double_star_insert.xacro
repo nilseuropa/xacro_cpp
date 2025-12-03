@@ -1,0 +1,23 @@
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+	<xacro:property name="prop" value="outer value" />
+	<xacro:macro name="my_macro" params="name *block1 **block2 **block3">
+		<xacro:property name="prop" value="inner value" />
+		<wrap name="${name}" prop="${prop}">
+			<!-- This block is inserted as is (with its original root tag) -->
+			<xacro:insert_block name="block1" />
+			<!-- From the other blocks (marked ** in the parameter list) only the content is inserted -->
+			<!-- We can re-order and re-use blocks multiple times -->
+			<xacro:insert_block name="block3" />
+			<xacro:insert_block name="block2" />
+			<xacro:insert_block name="block3" />
+		</wrap>
+	</xacro:macro>
+
+	<xacro:my_macro name="some name">
+		<!-- Blocks are associated to block parameters in positional order -->
+		<first>content</first>
+		<second><actual content="11"/></second>
+		<third><actual content="22" /></third>
+	</xacro:my_macro>
+	<out prop="${prop}" />
+</robot>

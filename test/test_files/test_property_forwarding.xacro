@@ -1,0 +1,11 @@
+<a xmlns:xacro="http://www.ros.org/wiki/xacro">
+ <xacro:property name="arg1" value="42"/>
+ <xacro:property name="arg2" value="43"/>
+ <xacro:property name="arg3" value="44"/>
+ <xacro:macro name="foo" params="arg1:=^">${arg1}</xacro:macro>
+ <xacro:macro name="bar" params="arg2:=^|">${arg2}</xacro:macro>
+ <xacro:macro name="baz" params="arg3:=^|55">${arg3}</xacro:macro>
+ <xacro:foo/>
+ <xacro:bar/>
+ <xacro:baz/>
+</a>

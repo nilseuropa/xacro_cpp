@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<robot name="xacro_test_nested_include" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- Include another Xacro file -->
+  <xacro:include filename="./including_other.xacro"/>
+
+  <xacro:property name="displacement" value="2.0"/>
+
+  <link name="deep_include_results">
+    <inertial>
+      <mass value="${scaled_mass}"/>
+      <origin xyz="${displacement} 0 0" rpy="0 0 0"/>
+    </inertial>
+  </link>
+
+</robot>

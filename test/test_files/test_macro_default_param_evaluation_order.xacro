@@ -1,0 +1,10 @@
+<a xmlns:xacro="http://www.ros.org/wiki/xacro">
+<xacro:macro name="foo" params="arg:=${foo}">
+    <xacro:property name="foo" value="-"/>
+    <f val="${arg}"/>
+</xacro:macro>
+<xacro:property name="foo" value="${3*7}"/>
+<xacro:foo/>
+<xacro:property name="foo" value="someString"/>
+<xacro:foo/>
+</a>

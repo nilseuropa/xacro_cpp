@@ -1,0 +1,5 @@
+<a xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:property name="p" default="1st" />
+  <xacro:property name="p" remove="true" />
+  <xacro:property name="p" default="2nd" />
+  ${p}</a>

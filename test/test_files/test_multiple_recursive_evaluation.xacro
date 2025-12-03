@@ -1,0 +1,7 @@
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:property name="a" value="1"/>
+  <xacro:property name="b" value="2"/>
+  <xacro:property name="c" value="3"/>
+  <xacro:property name="product" value="${a*b*c}"/>
+  <answer product="${product}"/>
+</robot>

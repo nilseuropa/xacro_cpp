@@ -1,0 +1,13 @@
+<a xmlns:xacro="http://www.ros.org/xacro">
+            <xacro:property name="prop" default="false"/>
+            <xacro:unless value="${prop}">
+                <foo/>
+                <xacro:property name="prop" value="true"/>
+            </xacro:unless>
+
+            <!-- second foo should be ignored -->
+            <xacro:unless value="${prop}">
+                <foo/>
+                <xacro:property name="prop" value="true"/>
+            </xacro:unless>
+        </a>

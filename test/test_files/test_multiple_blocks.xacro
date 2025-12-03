@@ -1,0 +1,10 @@
+<a xmlns:xacro="http://www.ros.org/wiki/xacro">
+<xacro:macro name="foo" params="*block2 *block1">
+  <xacro:insert_block name="block1" />
+  <xacro:insert_block name="block2" />
+</xacro:macro>
+<xacro:foo>
+  <block1/>
+  <block2/>
+</xacro:foo>
+</a>

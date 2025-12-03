@@ -1,0 +1,13 @@
+<root xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:property name="prop" value="outer"/>
+  <xacro:macro name="foo">
+    <outer prop="${prop}"/>
+    <xacro:property name="prop" value="inner"/>
+    <xacro:macro name="foo">
+      <inner prop="${prop}"/>
+    </xacro:macro>
+    <xacro:foo/>
+  </xacro:macro>
+  <xacro:foo/>
+  <xacro:foo/>
+</root>

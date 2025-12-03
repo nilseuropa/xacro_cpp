@@ -1,0 +1,2 @@
+<a xmlns:xacro="http://www.ros.org/wiki/xacro">
+ <xacro:undefined><foo/><bar/></xacro:undefined></a>

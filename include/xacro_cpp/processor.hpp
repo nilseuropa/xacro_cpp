@@ -1,13 +1,17 @@
 #pragma once
 
+#include <map>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
-#include <vector>
-#include <map>
 #include <unordered_set>
-#include <stdexcept>
+#include <vector>
 
-namespace tinyxml2 { class XMLDocument; class XMLElement; class XMLNode; }
+namespace tinyxml2 {
+class XMLDocument;
+class XMLElement;
+class XMLNode;
+} // namespace tinyxml2
 
 namespace xacro_cpp {
 
@@ -18,7 +22,7 @@ public:
 
 struct Options {
   std::string input_path;
-  std::string output_path; // empty -> stdout
+  std::string output_path;                               // empty -> stdout
   std::unordered_map<std::string, std::string> cli_args; // name:=value
 };
 
@@ -26,10 +30,8 @@ struct Options {
 double eval_number(const std::string& expr,
                    const std::unordered_map<std::string, std::string>& vars,
                    bool* ok = nullptr);
-bool eval_bool(const std::string& expr,
-               const std::unordered_map<std::string, std::string>& vars);
-std::string eval_string_template(const std::string& text,
-                                 const std::unordered_map<std::string, std::string>& vars);
+bool eval_bool(const std::string& expr, const std::unordered_map<std::string, std::string>& vars);
+std::string eval_string_template(const std::string& text, const std::unordered_map<std::string, std::string>& vars);
 
 class Processor {
 public:
@@ -57,9 +59,7 @@ public:
   // Parses just enough to collect xacro:arg and xacro:property defaults without full expansion.
   // Returns true and fills args_out with argument names and their default/effective values.
   // CLI args in opts.cli_args override defaults.
-  bool collectArgs(const Options& opts,
-                   std::map<std::string, std::string>* args_out,
-                   std::string* error_msg);
+  bool collectArgs(const Options& opts, std::map<std::string, std::string>* args_out, std::string* error_msg);
 
 private:
   tinyxml2::XMLDocument* doc_ = nullptr; // owned
@@ -87,11 +87,14 @@ private:
   static std::string trim(const std::string& s);
 
   bool handleIfUnless(tinyxml2::XMLElement* el, std::vector<tinyxml2::XMLNode*>* inserted_out = nullptr);
+  bool expandXacroElement(tinyxml2::XMLElement* el,
+                          const std::unordered_map<std::string, std::string>& scope);
   bool defineProperty(const tinyxml2::XMLElement* el);
   bool defineArg(const tinyxml2::XMLElement* el);
   bool defineMacro(tinyxml2::XMLElement* el);
   bool expandIncludesInNode(tinyxml2::XMLNode* node, const std::string& base_dir, std::string* error_msg);
   bool expandNode(tinyxml2::XMLNode* node);
+  void restoreDollarMarkers(tinyxml2::XMLNode* node);
   // Returns true if 'el' still exists and its children should be traversed;
   // returns false if 'el' was deleted/replaced and traversal should not use 'el'.
   bool expandElement(tinyxml2::XMLElement* el);

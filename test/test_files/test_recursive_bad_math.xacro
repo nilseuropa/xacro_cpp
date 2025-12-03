@@ -1,0 +1,4 @@
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:property name="x" value="0"/>
+  <tag badness="${1/x}"/>
+</robot>

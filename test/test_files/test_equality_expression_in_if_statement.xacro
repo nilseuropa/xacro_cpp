@@ -1,0 +1,4 @@
+<a xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:property name="var" value="useit"/>
+  <xacro:if value="${var == 'useit'}"><foo>bar</foo></xacro:if>
+</a>

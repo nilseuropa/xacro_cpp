@@ -1,0 +1,9 @@
+<xml xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:property name="foo" value="1.0"/>
+  <xacro:macro name="m" params="foo"><a foo="${foo}"/></xacro:macro>
+  <xacro:m foo="1 ${foo}"/>
+  <!-- now redefining the property and macro -->
+  <xacro:property name="foo" value="2.0"/>
+  <xacro:macro name="m" params="foo"><b bar="${foo}"/></xacro:macro>
+  <xacro:m foo="2 ${foo}"/>
+</xml>

@@ -1,0 +1,5 @@
+<a xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:macro name="foo"><a>foo</a></xacro:macro>
+  <xacro:macro name="bar"><b>bar</b></xacro:macro>
+  <xacro:property name="var" value="bar"/>
+  <xacro:call macro="${var}"/></a>

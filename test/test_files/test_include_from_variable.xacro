@@ -1,0 +1,4 @@
+<a xmlns:xacro="http://www.ros.org/xacro">
+ <xacro:property name="file" value="include1.xml"/>
+ <xacro:include filename="${file}" />
+</a>

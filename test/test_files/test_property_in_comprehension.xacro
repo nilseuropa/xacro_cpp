@@ -1,0 +1,5 @@
+<a xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:property name="abc" value="${[1,2,3]}"/>
+  <xacro:property name="xyz" value="${[abc[0]*abc[0],abc[1]*abc[1],abc[2]*abc[2]]}"/>
+  ${xyz}
+</a>
