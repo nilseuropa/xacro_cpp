@@ -1,0 +1,16 @@
+<root xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <!-- top-level comment should be removed -->
+  <child a="1">
+    it is a<!-- nested comment should be removed -->trap
+    text
+
+
+    here we are after 2 empty lines
+  </child>
+  <xacro:macro name="make">
+    <!-- comment inside macro definition should be removed -->
+    <made/>
+  </xacro:macro>
+  <!-- comment before macro invocation should be removed -->
+  <xacro:make/>
+</root>

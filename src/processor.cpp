@@ -1019,6 +1019,8 @@ bool Processor::loadDocument(const std::string& path, std::string* error_msg) {
       *error_msg = std::string("Failed to load XML: ") + doc_->ErrorStr();
     return false;
   }
+  // xacro ignores comments; strip them up front to simplify later passes.
+  removeComments(doc_);
   return true;
 }
 
@@ -1224,6 +1226,54 @@ bool Processor::defineMacro(tinyxml2::XMLElement* el) {
   return true;
 }
 
+void Processor::removeComments(tinyxml2::XMLNode* node) {
+  if (!node)
+    return;
+  for (auto* child = node->FirstChild(); child;) {
+    auto* next = child->NextSibling();
+    if (child->ToComment()) {
+      // When comments sit between text nodes, deleting them would glue words together.
+      // Insert a newline + indentation similar to Python xacro's pretty-printing so
+      // spacing is preserved once comments are removed.
+      auto* prev_text = child->PreviousSibling() ? child->PreviousSibling()->ToText() : nullptr;
+      auto* next_text = next ? next->ToText() : nullptr;
+      if (prev_text && next_text) {
+        std::string prev_val = prev_text->Value();
+        std::string next_val = next_text->Value();
+        auto is_ws = [](char c) { return std::isspace(static_cast<unsigned char>(c)) != 0; };
+        bool prev_needs_sep = !prev_val.empty() && !is_ws(prev_val.back());
+        bool next_needs_sep = !next_val.empty() && !is_ws(next_val.front());
+        if (prev_needs_sep && next_needs_sep) {
+          auto extract_indent = [](const std::string& s) {
+            std::string indent;
+            auto pos = s.rfind('\n');
+            if (pos != std::string::npos) {
+              for (size_t i = pos + 1; i < s.size(); ++i) {
+                char ch = s[i];
+                if (ch == ' ' || ch == '\t')
+                  indent.push_back(ch);
+                else
+                  break;
+              }
+            }
+            return indent;
+          };
+          std::string indent = extract_indent(prev_val);
+          std::string sep = "\n" + indent;
+          prev_val += sep;
+          next_val = sep + next_val;
+          prev_text->SetValue(prev_val.c_str());
+          next_text->SetValue(next_val.c_str());
+        }
+      }
+      node->DeleteChild(child);
+    } else {
+      removeComments(child);
+    }
+    child = next;
+  }
+}
+
 bool Processor::passCollectMacros(std::string* /*error_msg*/) {
   std::vector<tinyxml2::XMLElement*> to_remove;
   for (auto* el = doc_->RootElement(); el;) {
@@ -1320,6 +1370,7 @@ bool Processor::expandIncludesInNode(tinyxml2::XMLNode* node, const std::string&
           *error_msg = std::string("Failed to include ") + full;
         return false;
       }
+      removeComments(&inc);
       auto* root = inc.RootElement();
       if (!root)
         continue;
@@ -1426,6 +1477,35 @@ void Processor::substituteAttributes(tinyxml2::XMLElement* el) {
     el->SetAttribute(kv.first.c_str(), kv.second.c_str());
     modified_ = true;
   }
+}
+
+bool Processor::applyXacroAttribute(tinyxml2::XMLElement* el,
+                                    const std::unordered_map<std::string, std::string>& scope) {
+  if (!el)
+    return false;
+  tinyxml2::XMLNode* parent_node = el->Parent();
+  auto* parent_el = parent_node ? parent_node->ToElement() : nullptr;
+  if (!parent_el)
+    return false;
+
+  std::string name = getAttr(el, "name");
+  if (name.empty())
+    name = getAttr(el, "xacro:name");
+  std::string value = getAttr(el, "value");
+  if (value.empty()) {
+    const char* text = el->GetText();
+    if (text)
+      value = text;
+  }
+  name = eval_string_template(name, scope);
+  value = eval_string_template(value, scope);
+  if (name.empty())
+    return false;
+
+  parent_el->SetAttribute(name.c_str(), value.c_str());
+  parent_node->DeleteChild(el);
+  modified_ = true;
+  return true;
 }
 
 bool Processor::expandMacroCall(tinyxml2::XMLElement* el) {
@@ -1549,6 +1629,11 @@ bool Processor::expandMacroCall(tinyxml2::XMLElement* el) {
           modified_ = true;
           continue;
         }
+        // Handle xacro:attribute on the containing element
+        if (isXacroElement(ce, "attribute")) {
+          applyXacroAttribute(ce, scope);
+          continue;
+        }
         // Handle xacro:insert_block
         if (isXacroElement(ce, "insert_block")) {
           std::string bname = getAttr(ce, "name");
@@ -1632,6 +1717,10 @@ bool Processor::expandElement(tinyxml2::XMLElement* el) {
   bool was_xacro_element = expandXacroElement(el, vars_);
   if (!was_xacro_element && expandMacroCall(el))
     return false; // el replaced and processed; don't traverse old children
+  if (isXacroElement(el, "attribute")) {
+    applyXacroAttribute(el, vars_);
+    return false;
+  }
   substituteAttributes(el);
   return true; // el remains; traverse its children
 }

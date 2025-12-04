@@ -208,6 +208,10 @@ TEST_F(XacroTestFixture, precedence_order) {
   parseAndCompare("precedence_order");
 }
 
+TEST_F(XacroTestFixture, test_remove_comments) {
+  parseAndCompare("test_remove_comments");
+}
+
 TEST_F(XacroTestFixture, div_by_zero) {
   std::string file_name = "div_by_zero";
 
@@ -305,7 +309,7 @@ TEST_F(XacroTestFixture, test_macro_undefined) {
   parseAndExpectFailure("test_macro_undefined");
 }
 TEST_F(XacroTestFixture, test_xacro_element) {
-  parseAndCompareWithExpectedFixture("test_xacro_element");
+  parseAndCompare("test_xacro_element");
 }
 TEST_F(XacroTestFixture, test_xacro_attribute) {
   parseAndCompare("test_xacro_attribute");
