@@ -1215,6 +1215,12 @@ bool Processor::defineMacro(tinyxml2::XMLElement* el) {
   std::string params = getAttr(el, "params");
   MacroDef def;
   def.name = name;
+  std::string plain_name = name;
+  if (plain_name.rfind("xacro:", 0) == 0)
+    plain_name = plain_name.substr(6);
+  if (plain_name == "call") {
+    throw ProcessingError("Invalid use of macro name 'call'");
+  }
   def.params = parse_params(params);
   // Clone children of macro element into a container node we own in doc_
   tinyxml2::XMLNode* container = doc_->NewElement(("__macro__" + name).c_str());
@@ -1509,20 +1515,59 @@ bool Processor::applyXacroAttribute(tinyxml2::XMLElement* el,
 }
 
 bool Processor::expandMacroCall(tinyxml2::XMLElement* el) {
-  std::string name = el->Name();
-  // Allow calling macros with or without xacro: prefix
-  std::string mname = name;
-  if (mname.rfind("xacro:", 0) == 0)
-    mname = mname.substr(6);
-  auto it = macros_.find(mname);
-  if (it == macros_.end()) {
+  auto find_macro = [&](const std::vector<std::string>& names) -> const MacroDef* {
+    for (const auto& n : names) {
+      auto it = macros_.find(n);
+      if (it != macros_.end())
+        return &it->second;
+    }
+    return nullptr;
+  };
+  auto uniq_push = [](std::vector<std::string>* v, const std::string& n) {
+    if (n.empty())
+      return;
+    if (std::find(v->begin(), v->end(), n) == v->end())
+      v->push_back(n);
+  };
+
+  bool is_call_tag = isXacroElement(el, "call");
+  std::string target = is_call_tag ? getAttr(el, "macro") : std::string(el->Name() ? el->Name() : "");
+  if (is_call_tag && target.empty())
+    target = getAttr(el, "xacro:macro");
+  if (is_call_tag) {
+    if (target.empty())
+      throw ProcessingError("xacro:call: missing attribute 'macro'");
+    target = eval_string_template(target, vars_);
+    if (target.empty())
+      throw ProcessingError("xacro:call: missing attribute 'macro'");
+  }
+  std::string plain_target = target;
+  if (plain_target.rfind("xacro:", 0) == 0)
+    plain_target = plain_target.substr(6);
+
+  std::vector<std::string> candidates;
+  uniq_push(&candidates, target);
+  uniq_push(&candidates, plain_target);
+  if (plain_target != target)
+    uniq_push(&candidates, std::string("xacro:") + plain_target);
+  else if (!plain_target.empty())
+    uniq_push(&candidates, std::string("xacro:") + plain_target);
+
+  const MacroDef* mptr = find_macro(candidates);
+  if (!mptr) {
+    if (is_call_tag) {
+      std::string msg_name = target.empty() ? plain_target : target;
+      if (msg_name.rfind("xacro:", 0) != 0 && !msg_name.empty())
+        msg_name = "xacro:" + msg_name;
+      throw ProcessingError("unknown macro name: " + msg_name);
+    }
     return false;
   }
+  const MacroDef& m = *mptr;
   // Build local scope
   std::unordered_map<std::string, std::string> scope = vars_;
   // Collect block arguments passed as child elements of the macro call
   std::unordered_map<std::string, std::vector<tinyxml2::XMLNode*>> blocks;
-  const MacroDef& m = it->second;
   std::vector<tinyxml2::XMLElement*> call_blocks;
   for (auto* ch = el->FirstChildElement(); ch; ch = ch->NextSiblingElement())
     call_blocks.push_back(ch);

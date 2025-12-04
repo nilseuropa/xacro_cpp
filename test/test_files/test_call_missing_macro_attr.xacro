@@ -1,0 +1,6 @@
+<a xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:macro name="foo">
+    <foo/>
+  </xacro:macro>
+  <xacro:call/>
+</a>

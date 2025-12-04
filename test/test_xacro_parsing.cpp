@@ -115,38 +115,40 @@ sys.path.extend([
 import xml.etree.ElementTree as ET
 import re
 
+num_re = re.compile(r'[-+]?\d+\.\d+')
+
 def normalize_numbers(s: str) -> str:
-    def replacer(match):
-        num = float(match.group())
-        if num.is_integer():
-            return str(int(num))
-        return str(num)
-    return re.sub(r'\d+\.\d+', replacer, s)
+  if not isinstance(s, str):
+    return s
+  def replacer(match):
+    num = float(match.group())
+    if num.is_integer():
+      return str(int(num))
+    return str(num)
+  return num_re.sub(replacer, s)
+
+def normalize_text(s: str) -> str:
+  return normalize_numbers((s or '').strip())
 
 def parse_attributes(attr: dict) -> dict:
   return {k: normalize_numbers(v) for k, v in attr.items()}
 
 def compare_xml_files(a, b):
   diff = []
-  def same_xml(x, y):
+  def same_xml(x, y, path):
     if x.tag != y.tag:
-      err_msg = "tag mismatch: " + str(x) + " != " + str(y)
-      diff.append(err_msg)
-      return False
+      diff.append(f"{path}: tag mismatch '{x.tag}' != '{y.tag}'")
     if parse_attributes(x.attrib) != parse_attributes(y.attrib):
-      err_msg = "attribute mismatch in " + x.tag + ": " + str(x.attrib) + " != " + str(y.attrib)
-      diff.append(err_msg)
-      return False
-    if (x.text or '').strip() != (y.text or '').strip():
-      err_msg = "text mismatch in " + x.tag + ": " + str(x.text or '') + " != " + str(y.text or '')
-      diff.append(err_msg)
-      return False
+      diff.append(f"{path}/{x.tag}: attributes {x.attrib} != {y.attrib}")
+    if normalize_text(x.text) != normalize_text(y.text):
+      diff.append(f"{path}/{x.tag}: text '{(x.text or '').strip()}' != '{(y.text or '').strip()}'")
+    if normalize_text(x.tail) != normalize_text(y.tail):
+      diff.append(f"{path}/{x.tag}: tail '{(x.tail or '').strip()}' != '{(y.tail or '').strip()}'")
     if len(x) != len(y):
-      err_msg = "length mismatch in " + x.tag + ": " + str(len(x) or '') + " != " + str(len(x) or '')
-      diff.append(err_msg)
-      return False
-    return all(same_xml(c1, c2) for c1, c2 in zip(x, y))
-  same_xml(ET.parse(a).getroot(), ET.parse(b).getroot())
+      diff.append(f"{path}/{x.tag}: child count {len(x)} != {len(y)}")
+    for idx, (c1, c2) in enumerate(zip(x, y)):
+      same_xml(c1, c2, f"{path}/{x.tag}[{idx}]")
+  same_xml(ET.parse(a).getroot(), ET.parse(b).getroot(), "")
   return diff
   )";
     py::exec(script);
@@ -295,6 +297,9 @@ TEST_F(XacroTestFixture, test_double_underscore_property_name) {
   parseAndExpectFailure("test_double_underscore_property_name");
   // Expected: exception complaining about '__hidden'
 }
+TEST_F(XacroTestFixture, test_call_simple) {
+  parseAndCompare("test_call_simple");
+}
 TEST_F(XacroTestFixture, test_dynamic_macro_names) {
   parseAndCompare("test_dynamic_macro_names");
   // Expected: <a><b>bar</b>/a>
@@ -304,6 +309,9 @@ TEST_F(XacroTestFixture, test_dynamic_macro_name_clash) {
 }
 TEST_F(XacroTestFixture, test_dynamic_macro_undefined) {
   parseAndExpectFailure("test_dynamic_macro_undefined");
+}
+TEST_F(XacroTestFixture, test_call_missing_macro_attr) {
+  parseAndExpectFailure("test_call_missing_macro_attr");
 }
 TEST_F(XacroTestFixture, test_macro_undefined) {
   parseAndExpectFailure("test_macro_undefined");
