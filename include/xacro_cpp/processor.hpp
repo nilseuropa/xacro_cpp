@@ -96,6 +96,7 @@ private:
   bool expandNode(tinyxml2::XMLNode* node);
   void restoreDollarMarkers(tinyxml2::XMLNode* node);
   bool applyXacroAttribute(tinyxml2::XMLElement* el, const std::unordered_map<std::string, std::string>& scope);
+  const MacroDef* findMacro(const std::vector<std::string>& names) const;
   void removeComments(tinyxml2::XMLNode* node);
   // Returns true if 'el' still exists and its children should be traversed;
   // returns false if 'el' was deleted/replaced and traversal should not use 'el'.

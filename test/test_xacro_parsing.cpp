@@ -7,6 +7,7 @@
 #include <pybind11/stl.h>
 
 #include <filesystem>
+#include <iostream>
 #include <map>
 #include <string>
 
@@ -60,6 +61,20 @@ sys.path.extend([
     os = py::module_::import("os");
     sys = py::module_::import("sys");
     xacro = py::module_::import("xacro");
+
+    // Some distro builds of python xacro don't expose builtin abs() at the top level.
+    // Mirror the tinyexpr support so the Python reference parser can evaluate test files.
+    py::exec(R"(
+import builtins
+import xacro as _xacro
+if isinstance(getattr(_xacro, "_global_symbols", None), dict):
+    _xacro._global_symbols.setdefault("abs", builtins.abs)
+    py_ns = _xacro._global_symbols.get("python")
+    try:
+        py_ns.setdefault("abs", builtins.abs)
+    except Exception:
+        pass
+)");
   }
 
   static void parse_python(const std::string& input, const std::string& output) {

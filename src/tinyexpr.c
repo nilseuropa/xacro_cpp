@@ -7,6 +7,23 @@
 
 /* This is a very small subset of tinyexpr sufficient for basic math. */
 
+static double eval_func(const char* name, int len, double arg, int* handled) {
+  /* Recognize a handful of math functions used by xacro: sin, cos, exp, abs, fabs. */
+  *handled = 1;
+  if (len == 3 && name[0] == 's' && name[1] == 'i' && name[2] == 'n')
+    return sin(arg);
+  if (len == 3 && name[0] == 'c' && name[1] == 'o' && name[2] == 's')
+    return cos(arg);
+  if (len == 3 && name[0] == 'e' && name[1] == 'x' && name[2] == 'p')
+    return exp(arg);
+  if (len == 3 && name[0] == 'a' && name[1] == 'b' && name[2] == 's')
+    return fabs(arg);
+  if (len == 4 && name[0] == 'f' && name[1] == 'a' && name[2] == 'b' && name[3] == 's')
+    return fabs(arg);
+  *handled = 0;
+  return 0.0;
+}
+
 typedef struct state {
   const char* start;
   const char* next;
@@ -97,13 +114,32 @@ static te_expr* parse_primary(state* s) {
   } else if (s->type == TOK_VARIABLE) {
     const char* name = s->start;
     int len = (int)(s->next - s->start);
-    int idx = var_index(s, name, len);
-    double v = 0.0;
-    if (idx >= 0)
-      v = *(const double*)s->lookup[idx].address;
-    te_expr* e = new_value(v);
-    next_token(s);
-    return e;
+    const char* after = s->next;
+    while (*after && isspace((unsigned char)*after))
+      ++after;
+    if (*after == '(') {
+      /* Function call with a single argument. */
+      s->next = after;
+      next_token(s); /* consume '(' */
+      next_token(s); /* move to first token in arg */
+      te_expr* arg = parse_expr(s);
+      if (s->type == TOK_CLOSE)
+        next_token(s);
+      int handled = 0;
+      double v = eval_func(name, len, arg ? arg->u.value : 0.0, &handled);
+      te_expr* e = new_value(handled ? v : 0.0);
+      if (arg)
+        free(arg);
+      return e;
+    } else {
+      int idx = var_index(s, name, len);
+      double v = 0.0;
+      if (idx >= 0)
+        v = *(const double*)s->lookup[idx].address;
+      te_expr* e = new_value(v);
+      next_token(s);
+      return e;
+    }
   } else if (s->type == TOK_OPEN) {
     next_token(s);
     te_expr* e = parse_expr(s);
@@ -114,6 +150,10 @@ static te_expr* parse_primary(state* s) {
     next_token(s);
     te_expr* e = parse_primary(s);
     e->u.value = -e->u.value;
+    return e;
+  } else if (s->type == TOK_PLUS) {
+    next_token(s);
+    te_expr* e = parse_primary(s);
     return e;
   }
   return new_value(0.0);

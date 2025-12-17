@@ -4,7 +4,7 @@ project(xacro_cpp LANGUAGES C CXX)
 # Optionally build as a ROS 2 ament package if ament_cmake is available
 find_package(ament_cmake QUIET)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 

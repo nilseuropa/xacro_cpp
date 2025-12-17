@@ -1,3 +1,14 @@
 <a xmlns:xacro="http://www.ros.org/wiki/xacro">
   <foo function="${1. + cos(pi)}"/>
+  <foo function="${1. + sin(pi)}"/>
+  <foo function="${sin(pi)}"/>
+  <foo function="${cos(0)}"/>
+
+  <foo function="${cos(0) + sin(pi)}"/>
+
+  <foo function="${abs(42.42)}"/>
+  <foo function="${abs(-42.42)}"/>
+  <foo function="${fabs(42.42)}"/>
+  <foo function="${fabs(-42.42)}"/>
+
 </a>
