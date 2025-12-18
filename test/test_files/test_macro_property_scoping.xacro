@@ -1,0 +1,19 @@
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:property name="foo" value="global_foo"/>
+
+  <xacro:macro name="inner" params="tag">
+    <link name="${tag}_${foo}"/>
+  </xacro:macro>
+
+  <xacro:macro name="outer" params="tag">
+    <xacro:property name="foo" value="${tag}_local"/>
+    <xacro:inner tag="${tag}_one"/>
+    <xacro:inner tag="${tag}_two"/>
+  </xacro:macro>
+
+  <xacro:outer tag="first"/>
+  <xacro:outer tag="second"/>
+  <xacro:inner tag="global_only"/>
+
+  <link name="after_macro_${foo}"/>
+</robot>

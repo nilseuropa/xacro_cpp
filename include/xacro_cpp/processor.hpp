@@ -94,6 +94,7 @@ private:
   bool defineMacro(tinyxml2::XMLElement* el);
   bool expandIncludesInNode(tinyxml2::XMLNode* node, const std::string& base_dir, std::string* error_msg);
   bool expandNode(tinyxml2::XMLNode* node);
+  void collectGlobalsInIncludedDoc(tinyxml2::XMLDocument& inc, const std::string& base_dir);
   void restoreDollarMarkers(tinyxml2::XMLNode* node);
   bool applyXacroAttribute(tinyxml2::XMLElement* el, const std::unordered_map<std::string, std::string>& scope);
   const MacroDef* findMacro(const std::vector<std::string>& names) const;
@@ -101,7 +102,9 @@ private:
   // Returns true if 'el' still exists and its children should be traversed;
   // returns false if 'el' was deleted/replaced and traversal should not use 'el'.
   bool expandElement(tinyxml2::XMLElement* el);
-  bool expandMacroCall(tinyxml2::XMLElement* el);
+  bool expandMacroCall(tinyxml2::XMLElement* el,
+                       const std::unordered_map<std::string, std::string>& parent_scope,
+                       const std::unordered_map<std::string, std::vector<tinyxml2::XMLNode*>>* parent_blocks = nullptr);
   void substituteAttributes(tinyxml2::XMLElement* el);
 };
 

@@ -1415,6 +1415,63 @@ void Processor::removeComments(tinyxml2::XMLNode* node) {
   }
 }
 
+void Processor::collectGlobalsInIncludedDoc(tinyxml2::XMLDocument& inc, const std::string& base_dir) {
+  auto* root = inc.RootElement();
+  if (!root) {
+    return;
+  }
+  const std::string prev_base = base_dir_;
+  base_dir_ = base_dir;
+  std::vector<tinyxml2::XMLElement*> remove_args;
+  std::vector<tinyxml2::XMLElement*> remove_props;
+  struct Frame {
+    tinyxml2::XMLElement* el;
+    bool in_macro;
+    bool in_conditional;
+  };
+  std::vector<Frame> stack;
+  stack.push_back({root, false, false});
+  while (!stack.empty()) {
+    Frame f = stack.back();
+    stack.pop_back();
+    auto* cur = f.el;
+    bool in_macro = f.in_macro;
+    bool in_conditional = f.in_conditional;
+    if (isXacroElement(cur, "arg")) {
+      if (!in_macro && !in_conditional) {
+        defineArg(cur);
+        remove_args.push_back(cur);
+      }
+    }
+    if (isXacroElement(cur, "property")) {
+      if (!in_macro && !in_conditional) {
+        defineProperty(cur);
+        remove_props.push_back(cur);
+      }
+    }
+    auto* child = cur->LastChildElement();
+    bool child_in_macro = in_macro || isXacroElement(cur, "macro");
+    bool child_in_conditional = in_conditional || isXacroElement(cur, "if") || isXacroElement(cur, "unless")
+                                || isXacroElement(cur, "else") || isXacroElement(cur, "elseif")
+                                || isXacroElement(cur, "elif");
+    while (child) {
+      stack.push_back({child, child_in_macro, child_in_conditional});
+      child = child->PreviousSiblingElement();
+    }
+  }
+  for (auto* a : remove_args) {
+    if (auto* p = a->Parent()) {
+      p->DeleteChild(a);
+    }
+  }
+  for (auto* pr : remove_props) {
+    if (auto* p = pr->Parent()) {
+      p->DeleteChild(pr);
+    }
+  }
+  base_dir_ = prev_base;
+}
+
 bool Processor::passCollectMacros(std::string* /*error_msg*/) {
   std::vector<tinyxml2::XMLElement*> to_remove;
   for (auto* el = doc_->RootElement(); el;) {
@@ -1524,6 +1581,7 @@ bool Processor::expandIncludesInNode(tinyxml2::XMLNode* node, const std::string&
         return false;
       }
       removeComments(&inc);
+      collectGlobalsInIncludedDoc(inc, dirname(full));
       auto* root = inc.RootElement();
       if (!root) {
         continue;
@@ -1684,7 +1742,9 @@ const Processor::MacroDef* Processor::findMacro(const std::vector<std::string>& 
   return nullptr;
 }
 
-bool Processor::expandMacroCall(tinyxml2::XMLElement* el) {
+bool Processor::expandMacroCall(tinyxml2::XMLElement* el,
+                                const std::unordered_map<std::string, std::string>& parent_scope,
+                                const std::unordered_map<std::string, std::vector<tinyxml2::XMLNode*>>* parent_blocks) {
   auto uniq_push = [](std::vector<std::string>* v, const std::string& n) {
     if (n.empty()) {
       return;
@@ -1708,7 +1768,7 @@ bool Processor::expandMacroCall(tinyxml2::XMLElement* el) {
     if (target.empty()) {
       throw ProcessingError("xacro:call: missing attribute 'macro'");
     }
-    target = eval_string_template(target, vars_);
+    target = eval_string_template(target, parent_scope);
     if (target.empty()) {
       throw ProcessingError("xacro:call: missing attribute 'macro'");
     }
@@ -1739,12 +1799,27 @@ bool Processor::expandMacroCall(tinyxml2::XMLElement* el) {
     return false;
   }
   const MacroDef& m = *mptr;
-  // Build local scope
-  std::unordered_map<std::string, std::string> scope = vars_;
-  // Collect block arguments passed as child elements of the macro call
+  // Build local scope seeded from caller (outer macro/global scope).
+  std::unordered_map<std::string, std::string> scope = parent_scope;
+  // Collect block arguments passed as child nodes of the macro call.
+  // If a block argument is itself an xacro:insert_block, resolve it using the parent macro's blocks first
+  // to avoid self-recursive block substitution (matches Python xacro behavior).
   std::unordered_map<std::string, std::vector<tinyxml2::XMLNode*>> blocks;
-  std::vector<tinyxml2::XMLElement*> call_blocks;
-  for (auto* ch = el->FirstChildElement(); ch; ch = ch->NextSiblingElement()) {
+  std::vector<tinyxml2::XMLNode*> call_blocks;
+  for (auto* ch = el->FirstChild(); ch; ch = ch->NextSibling()) {
+    auto* chel = ch->ToElement();
+    if (parent_blocks && chel && isXacroElement(chel, "insert_block")) {
+      std::string bname = getAttr(chel, "name");
+      auto itpb = parent_blocks->find(bname);
+      if (itpb != parent_blocks->end()) {
+        for (auto* bn : itpb->second) {
+          if (bn) {
+            call_blocks.push_back(bn->DeepClone(doc_));
+          }
+        }
+        continue; // resolved this placeholder
+      }
+    }
     call_blocks.push_back(ch);
   }
   size_t block_arg_idx = 0;
@@ -1761,24 +1836,35 @@ bool Processor::expandMacroCall(tinyxml2::XMLElement* el) {
       raw_params[p.name] = av ? std::string(av) : p.default_value;
     }
   }
-  // Resolve parameters allowing cross-references between them
-  // Seed scope with raw values first
-  for (const auto& kv : raw_params) {
-    scope[kv.first] = kv.second;
-  }
+  // Resolve parameters allowing cross-references between them without self-recursing
+  const std::unordered_map<std::string, std::string> base_scope = scope;
+  std::unordered_map<std::string, std::string> evaluated_params;
   // Iteratively resolve templates (a couple of passes are sufficient in practice)
   for (int pass = 0; pass < 3; ++pass) {
     bool changed = false;
     for (auto& kv : raw_params) {
-      std::string v = eval_string_template(kv.second, scope);
-      if (scope[kv.first] != v) {
-        scope[kv.first] = v;
+      // Allow references to previously resolved params, but avoid using the current
+      // parameter's prior value to prevent self-recursion.
+      std::unordered_map<std::string, std::string> eval_scope = base_scope;
+      for (const auto& ep : evaluated_params) {
+        if (ep.first != kv.first) {
+          eval_scope[ep.first] = ep.second;
+        }
+      }
+      std::string v = eval_string_template(kv.second, eval_scope);
+      auto it_prev = evaluated_params.find(kv.first);
+      if (it_prev == evaluated_params.end() || it_prev->second != v) {
+        evaluated_params[kv.first] = v;
         changed = true;
       }
     }
     if (!changed) {
       break;
     }
+  }
+  scope = base_scope;
+  for (const auto& kv : evaluated_params) {
+    scope[kv.first] = kv.second;
   }
   // Clone macro content with substitution
   std::vector<tinyxml2::XMLNode*> cloned;
@@ -1799,6 +1885,19 @@ bool Processor::expandMacroCall(tinyxml2::XMLElement* el) {
       auto* cur = st.back();
       st.pop_back();
       if (auto* ce = cur->ToElement()) {
+        // Nested macro definitions: register and remove from output.
+        if (isXacroElement(ce, "macro")) {
+          defineMacro(ce);
+          if (auto* par = ce->Parent()) {
+            par->DeleteChild(ce);
+          }
+          modified_ = true;
+          continue;
+        }
+        // Expand nested macro calls using the current scope chain.
+        if (expandMacroCall(ce, scope, &blocks)) {
+          continue;
+        }
         // Evaluate local-scope conditionals inside macro bodies
         if (isXacroElement(ce, "if") || isXacroElement(ce, "unless")) {
           std::string cond = getAttr(ce, "value");
@@ -1949,7 +2048,7 @@ bool Processor::expandElement(tinyxml2::XMLElement* el) {
     }
   }
   bool was_xacro_element = expandXacroElement(el, vars_);
-  if (!was_xacro_element && expandMacroCall(el)) {
+  if (!was_xacro_element && expandMacroCall(el, vars_, nullptr)) {
     return false; // el replaced and processed; don't traverse old children
   }
   if (isXacroElement(el, "attribute")) {

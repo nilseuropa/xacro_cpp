@@ -425,6 +425,9 @@ TEST_F(XacroTestFixture, test_macro_has_new_scope) {
   ///  <inner prop="inner"/>
   /// </root>
 }
+TEST_F(XacroTestFixture, test_macro_property_scoping) {
+  parseAndCompare("test_macro_property_scoping");
+}
 TEST_F(XacroTestFixture, test_boolean_if_statement) {
   parseAndCompare("test_boolean_if_statement");
 }
