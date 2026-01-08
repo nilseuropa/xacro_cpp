@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
+#include <functional>
 #include <iomanip>
 #include <iostream>
 #include <limits>
@@ -19,6 +20,7 @@
 #include <system_error>
 #include <unordered_set>
 #include <vector>
+#include <yaml-cpp/yaml.h>
 #if __has_include(<filesystem>)
 #include <filesystem>
 namespace fs = std::filesystem;
@@ -155,14 +157,27 @@ static void detect_current_package_from(const std::string& start_dir) {
         }
       }
     }
-    p = p.parent_path();
+    fs::path parent = p.parent_path();
+    if (parent == p) {
+      break; // reached filesystem root
+    }
+    p = parent;
   }
 #endif
 }
 
 // Forward decl
+static std::string trim_ws(const std::string& s);
+static bool split_list_literal(const std::string& expr, std::vector<std::string>* items);
 static std::string replace_indexing_with_values(const std::string& expr,
                                                 const std::unordered_map<std::string, std::string>& vars);
+static std::string eval_string_with_vars(const std::string& expr,
+                                         const std::unordered_map<std::string, std::string>& vars,
+                                         bool* resolved);
+static std::string resolve_find(const std::string& pkg);
+static bool resolve_yaml_expression(const std::string& expr,
+                                    const std::unordered_map<std::string, YamlValue>* yaml_docs,
+                                    std::string* out);
 
 double eval_number(const std::string& expr, const std::unordered_map<std::string, std::string>& vars, bool* ok) {
   // Prepare variables as doubles when possible
@@ -181,10 +196,11 @@ double eval_number(const std::string& expr, const std::unordered_map<std::string
   };
   for (auto& kv : vars) {
     char* end = nullptr;
-    double val = std::strtod(kv.second.c_str(), &end);
+    std::string raw = trim_ws(kv.second);
+    double val = std::strtod(raw.c_str(), &end);
     bool consumed = (end && *end == '\0');
     if (!consumed) {
-      std::string lowered = to_lower(kv.second);
+      std::string lowered = to_lower(raw);
       if (lowered == "true") {
         val = 1.0;
         consumed = true;
@@ -404,7 +420,7 @@ static std::string strip_quotes(const std::string& s) {
   return s;
 }
 
-static std::string trim_copy(const std::string& s) {
+static std::string trim_ws(const std::string& s) {
   size_t i = 0, j = s.size();
   while (i < j && std::isspace(static_cast<unsigned char>(s[i])))
     ++i;
@@ -429,10 +445,45 @@ static bool is_simple_identifier(const std::string& s) {
   return true;
 }
 
-static bool has_unknown_identifier(const std::string& expr, const std::unordered_map<std::string, std::string>& vars) {
+static const std::unordered_set<std::string>& builtin_identifiers() {
   static const std::unordered_set<std::string> kBuiltins
     = {"sin",  "cos",   "tan",   "asin", "acos", "atan", "atan2", "sqrt", "abs", "fabs", "ln", "log",  "exp",
        "floor", "ceil", "round", "trunc", "sinh", "cosh", "tanh", "pow",  "min", "max", "pi",  "true", "false"};
+  return kBuiltins;
+}
+
+template <typename MapT>
+class ScopedRestore {
+public:
+  explicit ScopedRestore(MapT& target) : target_(target), saved_(target) {}
+  ~ScopedRestore() { target_ = std::move(saved_); }
+private:
+  MapT& target_;
+  MapT saved_;
+};
+
+class LocalScope {
+public:
+  explicit LocalScope(const std::unordered_map<std::string, std::string>& base) : vars_(base) {}
+  std::unordered_map<std::string, std::string>& map() { return vars_; }
+  const std::unordered_map<std::string, std::string>& map() const { return vars_; }
+  void set_property(const std::string& name,
+                    const std::string& value,
+                    const std::string& scope_attr,
+                    std::unordered_map<std::string, std::string>& globals) {
+    if (scope_attr == "global") {
+      globals[name] = value;
+    } else {
+      vars_[name] = value;
+    }
+  }
+private:
+  std::unordered_map<std::string, std::string> vars_;
+};
+
+static void scan_identifiers(const std::string& expr,
+                             const std::unordered_set<std::string>& builtins,
+                             const std::function<void(const std::string&)>& on_ident) {
   bool in_single = false;
   bool in_double = false;
   for (size_t i = 0; i < expr.size();) {
@@ -463,22 +514,136 @@ static bool has_unknown_identifier(const std::string& expr, const std::unordered
         }
       }
       std::string ident = expr.substr(i, j - i);
-      if (!kBuiltins.count(ident) && vars.find(ident) == vars.end()) {
-        return true;
+      if (!builtins.count(ident)) {
+        on_ident(ident);
       }
       i = j;
     } else {
       ++i;
     }
   }
-  return false;
+}
+
+static bool has_unknown_identifier(const std::string& expr, const std::unordered_map<std::string, std::string>& vars) {
+  const auto& kBuiltins = builtin_identifiers();
+  bool unknown = false;
+  scan_identifiers(expr, kBuiltins, [&](const std::string& ident) {
+    if (vars.find(ident) == vars.end()) {
+      unknown = true;
+    }
+  });
+  return unknown;
+}
+
+static void collect_identifiers(const std::string& expr, std::vector<std::string>* out) {
+  if (!out) {
+    return;
+  }
+  const auto& kBuiltins = builtin_identifiers();
+  scan_identifiers(expr, kBuiltins, [&](const std::string& ident) {
+    if (std::find(out->begin(), out->end(), ident) == out->end()) {
+      out->push_back(ident);
+    }
+  });
+}
+
+static bool try_eval_list_literal(const std::string& expr,
+                                  const std::unordered_map<std::string, std::string>& vars,
+                                  std::string* out) {
+  std::vector<std::string> list_expr_items;
+  if (!split_list_literal(expr, &list_expr_items)) {
+    return false;
+  }
+  bool list_resolved = true;
+  std::ostringstream oss;
+  oss << "[";
+  for (size_t idx_item = 0; idx_item < list_expr_items.size(); ++idx_item) {
+    std::string item_expr = replace_indexing_with_values(list_expr_items[idx_item], vars);
+    bool item_resolved = false;
+    std::string item_val = eval_string_with_vars(trim_ws(item_expr), vars, &item_resolved);
+    if (!item_resolved) {
+      list_resolved = false;
+      break;
+    }
+    if (idx_item) {
+      oss << ", ";
+    }
+    oss << item_val;
+  }
+  if (!list_resolved) {
+    return false;
+  }
+  oss << "]";
+  if (out) {
+    *out = oss.str();
+  }
+  return true;
+}
+
+static bool try_eval_find_expr(const std::string& expr, std::string* out) {
+  if (expr.rfind("find", 0) != 0) {
+    return false;
+  }
+  std::string inside;
+  size_t lp = expr.find('(');
+  size_t rp = expr.find_last_of(')');
+  if (lp != std::string::npos && rp != std::string::npos && rp > lp) {
+    inside = trim_ws(expr.substr(lp + 1, rp - lp - 1));
+    inside = strip_quotes(inside);
+  }
+  std::string found = inside.empty() ? std::string() : resolve_find(inside);
+  if (out) {
+    *out = found;
+  }
+  return true;
+}
+
+static bool try_eval_yaml_expr(const std::string& expr,
+                               const std::unordered_map<std::string, YamlValue>* yaml_docs,
+                               std::string* out) {
+  if (!yaml_docs) {
+    return false;
+  }
+  std::string yaml_resolved;
+  if (!resolve_yaml_expression(expr, yaml_docs, &yaml_resolved)) {
+    return false;
+  }
+  if (out) {
+    *out = yaml_resolved;
+  }
+  return true;
+}
+
+static bool try_eval_numeric_expr(const std::string& expr,
+                                  const std::unordered_map<std::string, std::string>& vars,
+                                  const std::function<std::string(const std::string&)>& resolve_var,
+                                  std::string* out) {
+  std::unordered_map<std::string, std::string> eval_vars = vars;
+  std::vector<std::string> idents;
+  collect_identifiers(expr, &idents);
+  for (const auto& ident : idents) {
+    auto it = vars.find(ident);
+    if (it != vars.end()) {
+      eval_vars[ident] = resolve_var(ident);
+    }
+  }
+  std::string ex2 = replace_indexing_with_values(expr, eval_vars);
+  bool resolved = false;
+  std::string val = eval_string_with_vars(ex2, eval_vars, &resolved);
+  if (!resolved) {
+    return false;
+  }
+  if (out) {
+    *out = val;
+  }
+  return true;
 }
 
 static bool split_list_literal(const std::string& expr, std::vector<std::string>* items) {
   if (!items) {
     return false;
   }
-  std::string trimmed = trim_copy(expr);
+  std::string trimmed = trim_ws(expr);
   if (trimmed.size() < 2 || trimmed.front() != '[' || trimmed.back() != ']') {
     return false;
   }
@@ -490,7 +655,7 @@ static bool split_list_literal(const std::string& expr, std::vector<std::string>
   bool in_single = false;
   bool in_double = false;
   auto flush = [&]() {
-    std::string token = trim_copy(current);
+    std::string token = trim_ws(current);
     if (!token.empty()) {
       tokens.push_back(token);
     }
@@ -560,7 +725,7 @@ static std::string replace_indexing_with_values(const std::string& expr,
           value = tokens[idx];
         }
       }
-      result += strip_quotes(trim_copy(value));
+      result += strip_quotes(trim_ws(value));
       searchStart = m.suffix().first;
     }
     result.append(searchStart, s.cend());
@@ -664,145 +829,306 @@ static std::string resolve_find(const std::string& pkg) {
   return std::string();
 }
 
-// Very small YAML subset parser for maps of numeric lists/scalars.
-// Supports patterns like:
-//   key: [1.0, 2, 3]
-//   key: 1.23
-//   key:
-//     - 1
-//     - 2.0
-static std::unordered_map<std::string, std::vector<double>> parse_simple_yaml_map(const std::string& path) {
-  std::unordered_map<std::string, std::vector<double>> out;
-  std::ifstream ifs(path);
-  if (!ifs) {
+static bool is_null_scalar(const std::string& raw) {
+  return raw == "~" || raw == "null" || raw == "Null" || raw == "NULL";
+}
+
+static bool is_bool_scalar(const std::string& raw) {
+  std::string lower;
+  lower.reserve(raw.size());
+  for (char c : raw) {
+    lower.push_back((char)std::tolower(static_cast<unsigned char>(c)));
+  }
+  return lower == "true" || lower == "false" || lower == "yes" || lower == "no" || lower == "on" || lower == "off";
+}
+
+static bool scalar_allows_int(const std::string& raw) {
+  return raw.find('.') == std::string::npos && raw.find('e') == std::string::npos && raw.find('E') == std::string::npos;
+}
+
+static YamlValue yaml_node_to_value(const YAML::Node& node) {
+  YamlValue out;
+  if (!node || node.IsNull()) {
+    out.type = YamlValue::Type::Null;
     return out;
   }
-  auto ltrim = [](const std::string& s) {
-    size_t i = 0;
-    while (i < s.size() && std::isspace(static_cast<unsigned char>(s[i])))
-      ++i;
-    return s.substr(i);
-  };
-  auto rtrim = [](const std::string& s) {
-    if (s.empty()) {
-      return s;
+  if (node.IsScalar()) {
+    std::string raw = node.Scalar();
+    if (is_null_scalar(raw)) {
+      out.type = YamlValue::Type::Null;
+      return out;
     }
-    size_t j = s.size();
-    while (j > 0 && std::isspace(static_cast<unsigned char>(s[j - 1])))
-      --j;
-    return s.substr(0, j);
-  };
-  auto trim = [&](const std::string& s) {
-    return rtrim(ltrim(s));
-  };
-  auto parse_list = [&](const std::string& s) {
-    std::vector<double> vec;
-    std::string t = trim(s);
-    size_t i = 0;
-    while (i < t.size()) {
-      // skip commas and spaces
-      while (i < t.size() && (t[i] == ',' || std::isspace(static_cast<unsigned char>(t[i]))))
-        ++i;
-      if (i >= t.size()) {
-        break;
-      }
-      size_t j = i;
-      while (j < t.size() && t[j] != ',')
-        ++j;
-      std::string item = trim(t.substr(i, j - i));
-      if (!item.empty()) {
-        try {
-          vec.push_back(std::stod(item));
-        } catch (...) {
-        }
-      }
-      i = j + 1;
-    }
-    return vec;
-  };
-  std::string line;
-  int last_indent = 0;
-  std::string pending_key;
-  std::vector<double> pending_list;
-  bool in_list = false;
-  while (std::getline(ifs, line)) {
-    // strip comments
-    auto hash = line.find('#');
-    if (hash != std::string::npos) {
-      line = line.substr(0, hash);
-    }
-    std::string raw = line;
-    std::string s = rtrim(raw);
-    if (s.empty()) {
-      continue;
-    }
-    // compute indent
-    int indent = 0;
-    while (indent < (int)raw.size() && std::isspace(static_cast<unsigned char>(raw[indent])))
-      ++indent;
-    std::string t = ltrim(raw);
-    if (in_list) {
-      if (indent <= last_indent) {
-        // end of list
-        out[pending_key] = pending_list;
-        pending_list.clear();
-        in_list = false;
-        pending_key.clear();
-      } else {
-        // expect list item
-        std::string lt = trim(t);
-        if (!lt.empty() && lt[0] == '-') {
-          std::string item = trim(lt.substr(1));
-          try {
-            pending_list.push_back(std::stod(item));
-          } catch (...) {
-          }
-          continue;
-        } else {
-          // unexpected, end list
-          out[pending_key] = pending_list;
-          pending_list.clear();
-          in_list = false;
-          pending_key.clear();
-        }
+    if (is_bool_scalar(raw)) {
+      try {
+        out.type = YamlValue::Type::Bool;
+        out.bool_value = node.as<bool>();
+        return out;
+      } catch (...) {
       }
     }
-    // key: value
-    std::smatch m;
-    static std::regex re_inline(R"(^([A-Za-z_][A-Za-z0-9_\-]*)\s*:\s*(.*)\s*$)");
-    if (std::regex_match(t, m, re_inline)) {
-      std::string key = std::string(m[1]);
-      std::string val = std::string(m[2]);
-      if (!val.empty() && val.front() == '[' && val.back() == ']') {
-        val = val.substr(1, val.size() - 2);
-        out[key] = parse_list(val);
-      } else if (val.empty()) {
-        // maybe a multiline list follows
-        in_list = true;
-        last_indent = indent;
-        pending_key = key;
-        pending_list.clear();
-      } else {
-        try {
-          out[key] = std::vector<double>{std::stod(trim(val))};
-        } catch (...) {
-        }
+    if (scalar_allows_int(raw)) {
+      try {
+        out.type = YamlValue::Type::Int;
+        out.int_value = node.as<int64_t>();
+        return out;
+      } catch (...) {
       }
     }
+    try {
+      out.type = YamlValue::Type::Double;
+      out.double_value = node.as<double>();
+      return out;
+    } catch (...) {
+    }
+    out.type = YamlValue::Type::String;
+    try {
+      out.string_value = node.as<std::string>();
+    } catch (...) {
+      out.string_value = raw;
+    }
+    return out;
   }
-  if (in_list && !pending_key.empty()) {
-    out[pending_key] = pending_list;
+  if (node.IsSequence()) {
+    out.type = YamlValue::Type::List;
+    out.list_value.reserve(node.size());
+    for (const auto& item : node) {
+      out.list_value.push_back(yaml_node_to_value(item));
+    }
+    return out;
   }
+  if (node.IsMap()) {
+    out.type = YamlValue::Type::Map;
+    for (const auto& kv : node) {
+      try {
+        std::string key = kv.first.as<std::string>();
+        out.map_value.emplace(key, yaml_node_to_value(kv.second));
+      } catch (...) {
+      }
+    }
+    return out;
+  }
+  out.type = YamlValue::Type::Null;
   return out;
 }
 
+static YamlValue parse_yaml_file(const std::string& path) {
+  try {
+    YAML::Node node = YAML::LoadFile(path);
+    return yaml_node_to_value(node);
+  } catch (...) {
+    YamlValue out;
+    out.type = YamlValue::Type::Null;
+    return out;
+  }
+}
+
+static std::string yaml_value_to_string(const YamlValue& value) {
+  switch (value.type) {
+  case YamlValue::Type::Null:
+    return "None";
+  case YamlValue::Type::Bool:
+    return value.bool_value ? "True" : "False";
+  case YamlValue::Type::Int:
+    return std::to_string(value.int_value);
+  case YamlValue::Type::Double: {
+    std::ostringstream oss;
+    oss << std::setprecision(std::numeric_limits<double>::max_digits10) << value.double_value;
+    std::string s = oss.str();
+    if (s.find('.') == std::string::npos && s.find('e') == std::string::npos && s.find('E') == std::string::npos) {
+      s += ".0";
+    }
+    return s;
+  }
+  case YamlValue::Type::String:
+    return value.string_value;
+  case YamlValue::Type::List: {
+    std::ostringstream oss;
+    oss << "[";
+    for (size_t i = 0; i < value.list_value.size(); ++i) {
+      if (i) {
+        oss << ", ";
+      }
+      oss << yaml_value_to_string(value.list_value[i]);
+    }
+    oss << "]";
+    return oss.str();
+  }
+  case YamlValue::Type::Map:
+    return std::string();
+  }
+  return std::string();
+}
+
+static void skip_ws(const std::string& s, size_t* pos) {
+  while (*pos < s.size() && std::isspace(static_cast<unsigned char>(s[*pos]))) {
+    ++(*pos);
+  }
+}
+
+static bool parse_identifier_token(const std::string& s, size_t* pos, std::string* out) {
+  if (*pos >= s.size()) {
+    return false;
+  }
+  char c = s[*pos];
+  if (!(std::isalpha(static_cast<unsigned char>(c)) || c == '_')) {
+    return false;
+  }
+  size_t start = *pos;
+  ++(*pos);
+  while (*pos < s.size()) {
+    char cur = s[*pos];
+    if (std::isalnum(static_cast<unsigned char>(cur)) || cur == '_') {
+      ++(*pos);
+    } else {
+      break;
+    }
+  }
+  *out = s.substr(start, *pos - start);
+  return true;
+}
+
+static bool parse_quoted_string(const std::string& s, size_t* pos, std::string* out) {
+  if (*pos >= s.size()) {
+    return false;
+  }
+  char quote = s[*pos];
+  if (quote != '\'' && quote != '"') {
+    return false;
+  }
+  ++(*pos);
+  std::string result;
+  while (*pos < s.size()) {
+    char c = s[*pos];
+    if (c == '\\') {
+      if (*pos + 1 >= s.size()) {
+        return false;
+      }
+      char next = s[*pos + 1];
+      if (next == '\\' || next == '\'' || next == '"') {
+        result.push_back(next);
+        *pos += 2;
+        continue;
+      }
+      result.push_back(next);
+      *pos += 2;
+      continue;
+    }
+    if (c == quote) {
+      ++(*pos);
+      *out = result;
+      return true;
+    }
+    result.push_back(c);
+    ++(*pos);
+  }
+  return false;
+}
+
+static bool resolve_yaml_expression(const std::string& expr,
+                                    const std::unordered_map<std::string, YamlValue>* yaml_docs,
+                                    std::string* out) {
+  if (!yaml_docs || !out) {
+    return false;
+  }
+  size_t pos = 0;
+  skip_ws(expr, &pos);
+  std::string root;
+  if (!parse_identifier_token(expr, &pos, &root)) {
+    return false;
+  }
+  auto it = yaml_docs->find(root);
+  if (it == yaml_docs->end()) {
+    return false;
+  }
+  const YamlValue* current = &it->second;
+  while (true) {
+    skip_ws(expr, &pos);
+    if (pos >= expr.size()) {
+      break;
+    }
+    char c = expr[pos];
+    if (c == '.') {
+      ++pos;
+      skip_ws(expr, &pos);
+      std::string key;
+      if (!parse_identifier_token(expr, &pos, &key)) {
+        return false;
+      }
+      if (current->type != YamlValue::Type::Map) {
+        return false;
+      }
+      auto mit = current->map_value.find(key);
+      if (mit == current->map_value.end()) {
+        return false;
+      }
+      current = &mit->second;
+      continue;
+    }
+    if (c == '[') {
+      ++pos;
+      skip_ws(expr, &pos);
+      if (pos >= expr.size()) {
+        return false;
+      }
+      if (expr[pos] == '\'' || expr[pos] == '"') {
+        std::string key;
+        if (!parse_quoted_string(expr, &pos, &key)) {
+          return false;
+        }
+        skip_ws(expr, &pos);
+        if (pos >= expr.size() || expr[pos] != ']') {
+          return false;
+        }
+        ++pos;
+        if (current->type != YamlValue::Type::Map) {
+          return false;
+        }
+        auto mit = current->map_value.find(key);
+        if (mit == current->map_value.end()) {
+          return false;
+        }
+        current = &mit->second;
+        continue;
+      }
+      size_t start = pos;
+      while (pos < expr.size() && std::isdigit(static_cast<unsigned char>(expr[pos]))) {
+        ++pos;
+      }
+      if (start == pos) {
+        return false;
+      }
+      std::string num_str = expr.substr(start, pos - start);
+      skip_ws(expr, &pos);
+      if (pos >= expr.size() || expr[pos] != ']') {
+        return false;
+      }
+      ++pos;
+      if (current->type != YamlValue::Type::List) {
+        return false;
+      }
+      size_t idx = 0;
+      try {
+        idx = static_cast<size_t>(std::stoul(num_str));
+      } catch (...) {
+        return false;
+      }
+      if (idx >= current->list_value.size()) {
+        return false;
+      }
+      current = &current->list_value[idx];
+      continue;
+    }
+    return false;
+  }
+  if (current->type == YamlValue::Type::Map) {
+    return false;
+  }
+  *out = yaml_value_to_string(*current);
+  return true;
+}
+
 std::string Processor::trim(const std::string& s) {
-  size_t i = 0, j = s.size();
-  while (i < j && isspace((unsigned char)s[i]))
-    ++i;
-  while (j > i && isspace((unsigned char)s[j - 1]))
-    --j;
-  return s.substr(i, j - i);
+  return trim_ws(s);
 }
 
 std::string Processor::getAttr(const tinyxml2::XMLElement* el, const char* name) {
@@ -855,6 +1181,52 @@ std::string eval_string_with_vars(const std::string& expr,
 }
 
 std::string eval_string_template(const std::string& text, const std::unordered_map<std::string, std::string>& vars) {
+  return eval_string_template(text, vars, nullptr);
+}
+
+static std::string eval_string_template(const std::string& text,
+                                        const std::unordered_map<std::string, std::string>& vars,
+                                        const std::unordered_map<std::string, YamlValue>* yaml_docs,
+                                        std::vector<std::string>* resolve_stack);
+
+std::string eval_string_template(const std::string& text,
+                                 const std::unordered_map<std::string, std::string>& vars,
+                                 const std::unordered_map<std::string, YamlValue>* yaml_docs) {
+  std::vector<std::string> resolve_stack;
+  return eval_string_template(text, vars, yaml_docs, &resolve_stack);
+}
+
+static std::string eval_string_template(const std::string& text,
+                                        const std::unordered_map<std::string, std::string>& vars,
+                                        const std::unordered_map<std::string, YamlValue>* yaml_docs,
+                                        std::vector<std::string>* resolve_stack) {
+  auto resolve_var = [&](const std::string& name) -> std::string {
+    auto it = vars.find(name);
+    if (it == vars.end()) {
+      return std::string();
+    }
+    if (resolve_stack) {
+      if (std::find(resolve_stack->begin(), resolve_stack->end(), name) != resolve_stack->end()) {
+        std::string msg = "circular variable definition: ";
+        for (const auto& entry : *resolve_stack) {
+          msg += entry;
+          msg += " -> ";
+        }
+        msg += name;
+        throw ProcessingError(msg);
+      }
+      resolve_stack->push_back(name);
+    }
+    std::string val = it->second;
+    if (val.find('$') != std::string::npos) {
+      val = eval_string_template(val, vars, yaml_docs, resolve_stack);
+    }
+    if (resolve_stack) {
+      resolve_stack->pop_back();
+    }
+    return val;
+  };
+
   // Handle escaped dollars first: each "$$" becomes a marker for a literal "$"
   auto escape_dollars = [](const std::string& in) {
     std::string out;
@@ -871,14 +1243,6 @@ std::string eval_string_template(const std::string& text, const std::unordered_m
   };
   std::string work = escape_dollars(text);
 
-  auto trim_str = [](const std::string& s) -> std::string {
-    size_t i = 0, j = s.size();
-    while (i < j && std::isspace(static_cast<unsigned char>(s[i])))
-      ++i;
-    while (j > i && std::isspace(static_cast<unsigned char>(s[j - 1])))
-      --j;
-    return s.substr(i, j - i);
-  };
   // Replace ${...} occurrences
   std::string out;
   out.reserve(work.size());
@@ -904,55 +1268,36 @@ std::string eval_string_template(const std::string& text, const std::unordered_m
       }
       if (j < work.size() && work[j] == '}') {
         std::string raw_expr = work.substr(i, j - i + 1);
-        std::string expr = trim_str(work.substr(i + 2, j - (i + 2)));
+        std::string expr = trim_ws(work.substr(i + 2, j - (i + 2)));
         validate_expression_chunk(expr);
-        // Handle inline list literals like [a, b, c]
-        std::vector<std::string> list_expr_items;
-        if (split_list_literal(expr, &list_expr_items)) {
-          bool list_resolved = true;
-          std::ostringstream oss;
-          oss << "[";
-          for (size_t idx_item = 0; idx_item < list_expr_items.size(); ++idx_item) {
-            std::string item_expr = replace_indexing_with_values(list_expr_items[idx_item], vars);
-            bool item_resolved = false;
-            std::string item_val = eval_string_with_vars(trim_copy(item_expr), vars, &item_resolved);
-            if (!item_resolved) {
-              list_resolved = false;
-              break;
-            }
-            if (idx_item) {
-              oss << ", ";
-            }
-            oss << item_val;
-          }
-          if (list_resolved) {
-            oss << "]";
-            out += oss.str();
+        std::string resolved_chunk;
+        if (try_eval_list_literal(expr, vars, &resolved_chunk)) {
+          out += resolved_chunk;
+          i = j + 1;
+          continue;
+        }
+        if (is_simple_identifier(expr)) {
+          auto it = vars.find(expr);
+          if (it != vars.end()) {
+            out += resolve_var(expr);
             i = j + 1;
             continue;
           }
         }
-        // Handle find('pkg') or find("pkg") or find(pkg)
-        if (expr.rfind("find", 0) == 0) {
-          std::string inside;
-          size_t lp = expr.find('(');
-          size_t rp = expr.find_last_of(')');
-          if (lp != std::string::npos && rp != std::string::npos && rp > lp) {
-            inside = trim_str(expr.substr(lp + 1, rp - lp - 1));
-            inside = strip_quotes(inside);
-          }
-          std::string found = inside.empty() ? std::string() : resolve_find(inside);
-          out += found;
+        if (try_eval_find_expr(expr, &resolved_chunk)) {
+          out += resolved_chunk;
           i = j + 1;
           continue;
         }
-        std::string ex2 = replace_indexing_with_values(expr, vars);
-        bool resolved = false;
-        std::string val = eval_string_with_vars(ex2, vars, &resolved);
-        if (!resolved) {
+        if (try_eval_yaml_expr(expr, yaml_docs, &resolved_chunk)) {
+          out += resolved_chunk;
+          i = j + 1;
+          continue;
+        }
+        if (!try_eval_numeric_expr(expr, vars, resolve_var, &resolved_chunk)) {
           out += raw_expr;
         } else {
-          out += val;
+          out += resolved_chunk;
         }
         i = j + 1;
         continue;
@@ -971,7 +1316,7 @@ std::string eval_string_template(const std::string& text, const std::unordered_m
   std::string::const_iterator searchStart(s.cbegin());
   while (std::regex_search(searchStart, s.cend(), m, re_arg)) {
     result.append(m.prefix().first, m.prefix().second);
-    std::string name = trim_str(std::string(m[1]));
+    std::string name = trim_ws(std::string(m[1]));
     name = strip_quotes(name);
     auto it = vars.find(name);
     if (it == vars.end()) {
@@ -993,7 +1338,7 @@ std::string eval_string_template(const std::string& text, const std::unordered_m
     std::string::const_iterator searchStart(s.cbegin());
     while (std::regex_search(searchStart, s.cend(), m, re)) {
       result.append(m.prefix().first, m.prefix().second);
-      std::string pkg = trim_str(std::string(m[1]));
+      std::string pkg = trim_ws(std::string(m[1]));
       pkg = strip_quotes(pkg);
       result += resolve_find(pkg);
       searchStart = m.suffix().first;
@@ -1017,6 +1362,7 @@ bool Processor::run(const Options& opts, std::string* error_msg) {
   base_dir_ = dirname(opts.input_path);
   vars_.clear();
   macros_.clear();
+  prop_deps_.clear();
   for (const auto& kv : opts.cli_args)
     vars_[kv.first] = kv.second;
 
@@ -1054,6 +1400,7 @@ bool Processor::runToString(const Options& opts, std::string* urdf_xml, std::str
   vars_.clear();
   macros_.clear();
   arg_names_.clear();
+  prop_deps_.clear();
   for (const auto& kv : opts.cli_args)
     vars_[kv.first] = kv.second;
 
@@ -1081,6 +1428,7 @@ bool Processor::collectArgs(const Options& opts, std::map<std::string, std::stri
   args_out->clear();
   base_dir_ = dirname(opts.input_path);
   arg_names_.clear();
+  prop_deps_.clear();
   if (!loadDocument(opts.input_path, error_msg)) {
     throw_from_error_msg(error_msg, "Failed to load XML");
   }
@@ -1130,11 +1478,7 @@ bool Processor::processDocument(std::string* error_msg) {
   if (!passCollectArgsAndProps(error_msg)) {
     return false;
   }
-  // 4) collect macros after all includes are inlined
-  if (!passCollectMacros(error_msg)) {
-    return false;
-  }
-  // 5) expand remaining xacro constructs (macros, if/unless, substitutions)
+  // 4) expand remaining xacro constructs in-order (macros, if/unless, substitutions)
   if (!passExpand(error_msg)) {
     return false;
   }
@@ -1152,17 +1496,55 @@ bool Processor::defineProperty(const tinyxml2::XMLElement* el) {
       value = text;
     }
   }
-  auto trim_local = [](const std::string& s) -> std::string {
-    size_t i = 0, j = s.size();
-    while (i < j && std::isspace(static_cast<unsigned char>(s[i])))
-      ++i;
-    while (j > i && std::isspace(static_cast<unsigned char>(s[j - 1])))
-      --j;
-    return s.substr(i, j - i);
-  };
-  std::string expr = trim_local(value);
+  if (!name.empty()) {
+    std::unordered_set<std::string> deps;
+    try {
+      std::regex re_expr(R"(\$\{([^}]*)\})");
+      std::smatch m;
+      std::string s = value;
+      std::string::const_iterator searchStart(s.cbegin());
+      while (std::regex_search(searchStart, s.cend(), m, re_expr)) {
+        std::string inner = Processor::trim(std::string(m[1]));
+        std::vector<std::string> idents;
+        collect_identifiers(inner, &idents);
+        for (const auto& ident : idents) {
+          deps.insert(ident);
+        }
+        searchStart = m.suffix().first;
+      }
+    } catch (...) {
+      // ignore malformed expressions here; evaluation will raise later if needed
+    }
+    prop_deps_[name] = std::move(deps);
+    std::unordered_set<std::string> visiting;
+    std::unordered_set<std::string> visited;
+    std::function<bool(const std::string&)> has_cycle = [&](const std::string& cur) -> bool {
+      if (visiting.count(cur)) {
+        return true;
+      }
+      if (visited.count(cur)) {
+        return false;
+      }
+      visiting.insert(cur);
+      auto it = prop_deps_.find(cur);
+      if (it != prop_deps_.end()) {
+        for (const auto& dep : it->second) {
+          if (has_cycle(dep)) {
+            return true;
+          }
+        }
+      }
+      visiting.erase(cur);
+      visited.insert(cur);
+      return false;
+    };
+    if (has_cycle(name)) {
+      throw ProcessingError("circular variable definition: " + name);
+    }
+  }
+  std::string expr = trim_ws(value);
   if (expr.size() >= 3 && expr[0] == '$' && expr[1] == '{' && expr.back() == '}') {
-    expr = trim_local(expr.substr(2, expr.size() - 3));
+    expr = trim_ws(expr.substr(2, expr.size() - 3));
   }
   // Handle xacro.load_yaml(file)
   {
@@ -1170,7 +1552,7 @@ bool Processor::defineProperty(const tinyxml2::XMLElement* el) {
     static std::regex re_load(R"(^\s*xacro\.load_yaml\((.*)\)\s*$)");
     if (!name.empty() && std::regex_match(expr, m, re_load)) {
       std::string arg = Processor::trim(std::string(m[1]));
-      std::string arg_eval = eval_string_template(arg, vars_);
+      std::string arg_eval = eval_string_template(arg, vars_, &yaml_docs_);
       if (arg_eval == arg) {
         auto it = vars_.find(arg);
         if (it != vars_.end()) {
@@ -1190,46 +1572,13 @@ bool Processor::defineProperty(const tinyxml2::XMLElement* el) {
 #else
       full = (!arg.empty() && arg[0] == '/') ? arg : (base_dir_ + "/" + arg);
 #endif
-      yaml_maps_[name] = parse_simple_yaml_map(full);
+      yaml_docs_[name] = parse_yaml_file(full);
       // store a marker or path for reference (not used later directly)
       vars_[name] = full;
       return true;
     }
   }
-  // Handle lookup of YAML key: somevar['key']
-  {
-    std::smatch m;
-    static std::regex re_get(R"(^\s*([A-Za-z_][A-Za-z0-9_]*)\s*\[\s*(?:'([^']+)'|\"([^\"]+)\")\s*\]\s*$)");
-    if (!name.empty() && std::regex_match(expr, m, re_get)) {
-      std::string container = std::string(m[1]);
-      std::string key = m[2].matched ? std::string(m[2]) : std::string(m[3]);
-      auto it = yaml_maps_.find(container);
-      if (it != yaml_maps_.end()) {
-        auto it2 = it->second.find(key);
-        if (it2 != it->second.end()) {
-          std::ostringstream oss;
-          if (it2->second.size() == 1) {
-            oss << it2->second.front();
-          } else {
-            oss << "[";
-            for (size_t i = 0; i < it2->second.size(); ++i) {
-              if (i) {
-                oss << ", ";
-              }
-              oss << it2->second[i];
-            }
-            oss << "]";
-          }
-          vars_[name] = oss.str();
-          return true;
-        }
-      }
-      // not found: set empty
-      vars_[name].clear();
-      return true;
-    }
-  }
-  value = eval_string_template(value, vars_);
+  value = eval_string_template(value, vars_, &yaml_docs_);
   // Normalize simple list literals so later indexing sees evaluated entries.
   if (!value.empty()) {
     std::vector<std::string> list_items;
@@ -1260,14 +1609,13 @@ bool Processor::defineArg(const tinyxml2::XMLElement* el) {
     arg_names_.insert(name);
   }
   if (vars_.find(name) == vars_.end()) {
-    vars_[name] = eval_string_template(def, vars_);
+    vars_[name] = eval_string_template(def, vars_, &yaml_docs_);
   }
   return true;
 }
 
 bool Processor::passCollectArgsAndProps(std::string* /*error_msg*/) {
   std::vector<tinyxml2::XMLElement*> remove_args;
-  std::vector<tinyxml2::XMLElement*> remove_props;
   struct Frame {
     tinyxml2::XMLElement* el;
     bool in_macro;
@@ -1287,12 +1635,6 @@ bool Processor::passCollectArgsAndProps(std::string* /*error_msg*/) {
         remove_args.push_back(cur);
       }
     }
-    if (isXacroElement(cur, "property")) {
-      if (!in_macro && !in_conditional) {
-        defineProperty(cur);
-        remove_props.push_back(cur);
-      }
-    }
     auto* child = cur->LastChildElement();
     bool child_in_macro = in_macro || isXacroElement(cur, "macro");
     bool child_in_conditional = in_conditional || isXacroElement(cur, "if") || isXacroElement(cur, "unless")
@@ -1309,30 +1651,75 @@ bool Processor::passCollectArgsAndProps(std::string* /*error_msg*/) {
       p->DeleteChild(a);
     }
   }
-  // Remove xacro:property elements from output after evaluation
-  for (auto* pr : remove_props) {
-    if (auto* p = pr->Parent()) {
-      p->DeleteChild(pr);
-    }
-  }
   return true;
 }
 
 static std::vector<Processor::MacroParam> parse_params(const std::string& s) {
   std::vector<Processor::MacroParam> out;
-  std::istringstream iss(s);
+  std::vector<std::string> tokens;
   std::string tok;
-  while (iss >> tok) {
+  bool in_single = false;
+  bool in_double = false;
+  for (char c : s) {
+    if (c == '\'' && !in_double) {
+      in_single = !in_single;
+      tok.push_back(c);
+      continue;
+    }
+    if (c == '"' && !in_single) {
+      in_double = !in_double;
+      tok.push_back(c);
+      continue;
+    }
+    if (!in_single && !in_double && std::isspace(static_cast<unsigned char>(c))) {
+      if (!tok.empty()) {
+        tokens.push_back(tok);
+        tok.clear();
+      }
+      continue;
+    }
+    tok.push_back(c);
+  }
+  if (!tok.empty()) {
+    tokens.push_back(tok);
+  }
+  for (const auto& raw_tok : tokens) {
     Processor::MacroParam p;
-    auto pos = tok.find(":=");
+    size_t pos = std::string::npos;
+    size_t pos_len = 0;
+    in_single = false;
+    in_double = false;
+    for (size_t i = 0; i < raw_tok.size(); ++i) {
+      char c = raw_tok[i];
+      if (c == '\'' && !in_double) {
+        in_single = !in_single;
+      } else if (c == '"' && !in_single) {
+        in_double = !in_double;
+      }
+      if (in_single || in_double) {
+        continue;
+      }
+      if (c == ':' && i + 1 < raw_tok.size() && raw_tok[i + 1] == '=') {
+        pos = i;
+        pos_len = 2;
+        break;
+      }
+      if (c == '=') {
+        pos = i;
+        pos_len = 1;
+        break;
+      }
+    }
     if (pos != std::string::npos) {
-      p.name = tok.substr(0, pos);
-      p.default_value = tok.substr(pos + 2);
+      p.name = raw_tok.substr(0, pos);
+      p.default_value = raw_tok.substr(pos + pos_len);
+      p.default_value = strip_quotes(trim_ws(p.default_value));
     } else {
-      p.name = tok;
+      p.name = raw_tok;
       p.default_value.clear();
     }
-    if (!p.name.empty() && p.name[0] == '*') {
+    p.name = trim_ws(p.name);
+    while (!p.name.empty() && p.name[0] == '*') {
       p.is_block = true;
       p.name = p.name.substr(1);
     }
@@ -1483,6 +1870,7 @@ bool Processor::passCollectMacros(std::string* /*error_msg*/) {
       if (isXacroElement(cur, "macro")) {
         defineMacro(cur);
         to_remove.push_back(cur);
+        continue; // nested macros are scoped; skip traversing macro body
       }
       auto* child = cur->LastChildElement();
       while (child) {
@@ -1524,10 +1912,11 @@ bool Processor::expandIncludesInNode(tinyxml2::XMLNode* node, const std::string&
     tinyxml2::XMLElement* el;
     std::string bdir;
     bool active;
+    bool in_macro;
   };
   std::vector<Frame> stack;
   if (auto* root_el = node->ToElement()) {
-    stack.push_back({root_el, base_dir, true});
+    stack.push_back({root_el, base_dir, true, false});
   }
   while (!stack.empty()) {
     Frame fr = stack.back();
@@ -1535,15 +1924,22 @@ bool Processor::expandIncludesInNode(tinyxml2::XMLNode* node, const std::string&
     tinyxml2::XMLElement* cur = fr.el;
     std::string cur_base = fr.bdir;
     bool active = fr.active;
+    bool in_macro = fr.in_macro;
     // For xacro:if/unless, determine child activity but do not splice yet.
     if (isXacroElement(cur, "if") || isXacroElement(cur, "unless")) {
       std::string cond = getAttr(cur, "value");
-      bool val = eval_bool(eval_string_template(cond, vars_), vars_);
+      bool val = eval_bool(eval_string_template(cond, vars_, &yaml_docs_), vars_);
       if (isXacroElement(cur, "unless")) {
         val = !val;
       }
       for (auto* child = cur->LastChildElement(); child; child = child->PreviousSiblingElement()) {
-        stack.push_back({child, cur_base, active && val});
+        stack.push_back({child, cur_base, active && val, in_macro});
+      }
+      continue;
+    }
+    if (isXacroElement(cur, "property")) {
+      if (active && !in_macro) {
+        defineProperty(cur);
       }
       continue;
     }
@@ -1552,7 +1948,7 @@ bool Processor::expandIncludesInNode(tinyxml2::XMLNode* node, const std::string&
         continue;
       }
       std::string file = getAttr(cur, "filename");
-      file = eval_string_template(file, vars_);
+      file = eval_string_template(file, vars_, &yaml_docs_);
       if (file.empty()) {
         continue;
       }
@@ -1599,15 +1995,16 @@ bool Processor::expandIncludesInNode(tinyxml2::XMLNode* node, const std::string&
       // Push newly inserted elements with their base dir for further include resolution
       for (auto* n : cloned) {
         if (auto* e = n->ToElement()) {
-          stack.push_back({e, new_base, active});
+          stack.push_back({e, new_base, active, in_macro});
         }
       }
       parent->DeleteChild(cur);
       continue;
     }
     // Regular element: push its children with same base
+    bool child_in_macro = in_macro || isXacroElement(cur, "macro");
     for (auto* child = cur->LastChildElement(); child; child = child->PreviousSiblingElement()) {
-      stack.push_back({child, cur_base, active});
+      stack.push_back({child, cur_base, active, child_in_macro});
     }
   }
   return true;
@@ -1620,7 +2017,7 @@ bool Processor::passExpandIncludes(std::string* error_msg) {
 bool Processor::handleIfUnless(tinyxml2::XMLElement* el, std::vector<tinyxml2::XMLNode*>* inserted_out) {
   if (isXacroElement(el, "if") || isXacroElement(el, "unless")) {
     std::string cond = getAttr(el, "value");
-    std::string cond_eval = eval_string_template(cond, vars_);
+    std::string cond_eval = eval_string_template(cond, vars_, &yaml_docs_);
     bool val = eval_bool(cond_eval, vars_);
     if (isXacroElement(el, "unless")) {
       val = !val;
@@ -1658,7 +2055,7 @@ bool Processor::expandXacroElement(tinyxml2::XMLElement* el,
   if (raw_name.empty()) {
     raw_name = getAttr(el, "name");
   }
-  std::string new_name = eval_string_template(raw_name, scope);
+  std::string new_name = eval_string_template(raw_name, scope, &yaml_docs_);
   if (new_name.empty()) {
     throw ProcessingError("xacro:element requires a non-empty name");
   }
@@ -1686,7 +2083,7 @@ void Processor::substituteAttributes(tinyxml2::XMLElement* el) {
   while (a) {
     std::string name = a->Name();
     std::string val = a->Value();
-    std::string newv = eval_string_template(val, vars_);
+    std::string newv = eval_string_template(val, vars_, &yaml_docs_);
     if (newv != val) {
       updates.emplace_back(name, newv);
     }
@@ -1720,8 +2117,8 @@ bool Processor::applyXacroAttribute(tinyxml2::XMLElement* el,
       value = text;
     }
   }
-  name = eval_string_template(name, scope);
-  value = eval_string_template(value, scope);
+  name = eval_string_template(name, scope, &yaml_docs_);
+  value = eval_string_template(value, scope, &yaml_docs_);
   if (name.empty()) {
     return false;
   }
@@ -1745,6 +2142,10 @@ const Processor::MacroDef* Processor::findMacro(const std::vector<std::string>& 
 bool Processor::expandMacroCall(tinyxml2::XMLElement* el,
                                 const std::unordered_map<std::string, std::string>& parent_scope,
                                 const std::unordered_map<std::string, std::vector<tinyxml2::XMLNode*>>* parent_blocks) {
+  auto is_known_xacro_tag = [](const std::string& name) {
+    return name == "macro" || name == "property" || name == "arg" || name == "include" || name == "if"
+      || name == "unless" || name == "element" || name == "attribute" || name == "insert_block" || name == "call";
+  };
   auto uniq_push = [](std::vector<std::string>* v, const std::string& n) {
     if (n.empty()) {
       return;
@@ -1768,7 +2169,7 @@ bool Processor::expandMacroCall(tinyxml2::XMLElement* el,
     if (target.empty()) {
       throw ProcessingError("xacro:call: missing attribute 'macro'");
     }
-    target = eval_string_template(target, parent_scope);
+    target = eval_string_template(target, parent_scope, &yaml_docs_);
     if (target.empty()) {
       throw ProcessingError("xacro:call: missing attribute 'macro'");
     }
@@ -1796,11 +2197,16 @@ bool Processor::expandMacroCall(tinyxml2::XMLElement* el,
       }
       throw ProcessingError("unknown macro name: " + msg_name);
     }
+    if (target.starts_with(kXacroPrefix) && !is_known_xacro_tag(plain_target)) {
+      throw ProcessingError("unknown macro name: " + target);
+    }
     return false;
   }
   const MacroDef& m = *mptr;
+  ScopedRestore<std::unordered_map<std::string, MacroDef>> macro_scope_guard(macros_);
   // Build local scope seeded from caller (outer macro/global scope).
-  std::unordered_map<std::string, std::string> scope = parent_scope;
+  LocalScope scope_frame(parent_scope);
+  auto& scope = scope_frame.map();
   // Collect block arguments passed as child nodes of the macro call.
   // If a block argument is itself an xacro:insert_block, resolve it using the parent macro's blocks first
   // to avoid self-recursive block substitution (matches Python xacro behavior).
@@ -1823,8 +2229,13 @@ bool Processor::expandMacroCall(tinyxml2::XMLElement* el,
     call_blocks.push_back(ch);
   }
   size_t block_arg_idx = 0;
-  // First collect raw parameter strings (without evaluating references yet)
-  std::unordered_map<std::string, std::string> raw_params;
+  struct RawParam {
+    std::string name;
+    std::string value;
+    bool from_attr = false;
+  };
+  std::vector<RawParam> raw_params;
+  raw_params.reserve(m.params.size());
   for (const auto& p : m.params) {
     if (p.is_block) {
       if (block_arg_idx < call_blocks.size()) {
@@ -1833,34 +2244,22 @@ bool Processor::expandMacroCall(tinyxml2::XMLElement* el,
       ++block_arg_idx;
     } else {
       const char* av = el->Attribute(p.name.c_str());
-      raw_params[p.name] = av ? std::string(av) : p.default_value;
+      raw_params.push_back({p.name, av ? std::string(av) : p.default_value, av != nullptr});
     }
   }
-  // Resolve parameters allowing cross-references between them without self-recursing
+  // Resolve parameters in definition order. Call-site attributes are evaluated in
+  // the parent scope; defaults may reference previously bound params.
   const std::unordered_map<std::string, std::string> base_scope = scope;
   std::unordered_map<std::string, std::string> evaluated_params;
-  // Iteratively resolve templates (a couple of passes are sufficient in practice)
-  for (int pass = 0; pass < 3; ++pass) {
-    bool changed = false;
-    for (auto& kv : raw_params) {
-      // Allow references to previously resolved params, but avoid using the current
-      // parameter's prior value to prevent self-recursion.
-      std::unordered_map<std::string, std::string> eval_scope = base_scope;
+  for (const auto& rp : raw_params) {
+    std::unordered_map<std::string, std::string> eval_scope = base_scope;
+    if (!rp.from_attr) {
       for (const auto& ep : evaluated_params) {
-        if (ep.first != kv.first) {
-          eval_scope[ep.first] = ep.second;
-        }
-      }
-      std::string v = eval_string_template(kv.second, eval_scope);
-      auto it_prev = evaluated_params.find(kv.first);
-      if (it_prev == evaluated_params.end() || it_prev->second != v) {
-        evaluated_params[kv.first] = v;
-        changed = true;
+        eval_scope[ep.first] = ep.second;
       }
     }
-    if (!changed) {
-      break;
-    }
+    std::string v = eval_string_template(rp.value, eval_scope, &yaml_docs_);
+    evaluated_params[rp.name] = v;
   }
   scope = base_scope;
   for (const auto& kv : evaluated_params) {
@@ -1901,7 +2300,7 @@ bool Processor::expandMacroCall(tinyxml2::XMLElement* el,
         // Evaluate local-scope conditionals inside macro bodies
         if (isXacroElement(ce, "if") || isXacroElement(ce, "unless")) {
           std::string cond = getAttr(ce, "value");
-          std::string cond_eval = eval_string_template(cond, scope);
+          std::string cond_eval = eval_string_template(cond, scope, &yaml_docs_);
           bool val = eval_bool(cond_eval, scope);
           if (isXacroElement(ce, "unless")) {
             val = !val;
@@ -1943,13 +2342,9 @@ bool Processor::expandMacroCall(tinyxml2::XMLElement* el,
               pval = text;
             }
           }
-          pval = eval_string_template(pval, scope);
+          pval = eval_string_template(pval, scope, &yaml_docs_);
           if (!pname.empty()) {
-            if (scope_attr == "global") {
-              vars_[pname] = pval;
-            } else {
-              scope[pname] = pval;
-            }
+            scope_frame.set_property(pname, pval, scope_attr, vars_);
           }
           if (auto* par = ce->Parent()) {
             par->DeleteChild(ce);
@@ -1994,7 +2389,7 @@ bool Processor::expandMacroCall(tinyxml2::XMLElement* el,
         while (a) {
           std::string an = a->Name();
           std::string av = a->Value();
-          std::string newv = eval_string_template(av, scope);
+          std::string newv = eval_string_template(av, scope, &yaml_docs_);
           if (newv != av) {
             updates.emplace_back(an, newv);
           }
@@ -2007,7 +2402,7 @@ bool Processor::expandMacroCall(tinyxml2::XMLElement* el,
       } else if (auto* tx = cur->ToText()) {
         const char* tv = tx->Value();
         if (tv) {
-          std::string nv = eval_string_template(tv, scope);
+          std::string nv = eval_string_template(tv, scope, &yaml_docs_);
           if (nv != tv) {
             tx->SetValue(nv.c_str());
             modified_ = true;
@@ -2047,6 +2442,14 @@ bool Processor::expandElement(tinyxml2::XMLElement* el) {
       return false; // el was deleted or spliced; don't traverse its children
     }
   }
+  if (isXacroElement(el, "macro")) {
+    defineMacro(el);
+    if (auto* p = el->Parent()) {
+      p->DeleteChild(el);
+    }
+    modified_ = true;
+    return false;
+  }
   bool was_xacro_element = expandXacroElement(el, vars_);
   if (!was_xacro_element && expandMacroCall(el, vars_, nullptr)) {
     return false; // el replaced and processed; don't traverse old children
@@ -2075,7 +2478,7 @@ bool Processor::expandNode(tinyxml2::XMLNode* node) {
     } else if (auto* txt = cur->ToText()) {
       const char* tv = txt->Value();
       if (tv) {
-        std::string nv = eval_string_template(tv, vars_);
+        std::string nv = eval_string_template(tv, vars_, &yaml_docs_);
         if (nv != tv) {
           txt->SetValue(nv.c_str());
           modified_ = true;

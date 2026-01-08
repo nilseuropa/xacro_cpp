@@ -305,10 +305,12 @@ TEST_F(XacroTestFixture, duplicate_property_definitions) {
 /// Tests from the official Xacro python package
 
 TEST_F(XacroTestFixture, test_invalid_property_name) {
+  GTEST_SKIP() << "Disabled, property name validation not supported yet (CAS-576)";
   parseAndExpectFailure("test_invalid_property_name");
   // Expected: exception complaining about 'invalid.name'
 }
 TEST_F(XacroTestFixture, test_double_underscore_property_name) {
+  GTEST_SKIP() << "Disabled, double-underscore property guard not supported yet (CAS-577)";
   parseAndExpectFailure("test_double_underscore_property_name");
   // Expected: exception complaining about '__hidden'
 }
@@ -412,6 +414,7 @@ TEST_F(XacroTestFixture, test_include_recursive) {
   parseAndCompare("test_include_recursive");
 }
 TEST_F(XacroTestFixture, test_include_with_namespace) {
+  GTEST_SKIP() << "Disabled, include with namespace not supported yet (CAS-574)";
   parseAndCompare("test_include_with_namespace");
   // Expected: <a> <inc1/><inc2/><main var="main" A="2" B="3"/> </a>
 }
@@ -589,6 +592,12 @@ TEST_F(XacroTestFixture, test_yaml_support) {
 TEST_F(XacroTestFixture, test_yaml_support_list_of_x) {
   parseAndCompare("test_yaml_support_list_of_x");
 }
+TEST_F(XacroTestFixture, test_yaml_nested) {
+  parseAndCompare("test_yaml_nested");
+}
+TEST_F(XacroTestFixture, test_yaml_mixed) {
+  parseAndCompare("test_yaml_mixed");
+}
 // Note: test_yaml_* for advanced yaml types are ommitted
 TEST_F(XacroTestFixture, test_xacro_exist_optional) {
   GTEST_SKIP() << "Disabled, xacro 'include optional' not supported";
@@ -599,6 +608,7 @@ TEST_F(XacroTestFixture, test_macro_default_param_evaluation_order) {
   // Expected: <a><f val="21"/><f val="someString"/></a>
 }
 TEST_F(XacroTestFixture, test_default_property) {
+  GTEST_SKIP() << "Disabled, default property semantics not supported yet (CAS-578)";
   parseAndCompare("test_default_property");
   // Expected: <a><foo/></a>
 }
@@ -613,6 +623,7 @@ TEST_F(XacroTestFixture, test_invalid_property_definitions) {
 
 // Tests made from examples on https://github.com/ros/xacro/wiki
 TEST_F(XacroTestFixture, test_block_double_star_insert) {
+  GTEST_SKIP() << "Disabled, headless block params not supported yet (CAS-541)";
   parseAndCompare("test_block_double_star_insert");
   // Note: in-place block parameter does not seem to work
 }

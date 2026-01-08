@@ -1,0 +1,8 @@
+<a xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:property name="cfg" value="${xacro.load_yaml('yaml_nested.yaml')}"/>
+  ${cfg['a']['b'][1]['d']}
+  ${cfg.flag}
+  ${cfg.num}
+  ${cfg.text}
+  ${cfg.nil_value}
+</a>

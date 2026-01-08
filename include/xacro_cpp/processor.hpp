@@ -1,6 +1,7 @@
 #pragma once
 
 #include <map>
+#include <cstdint>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -32,6 +33,21 @@ double eval_number(const std::string& expr,
                    bool* ok = nullptr);
 bool eval_bool(const std::string& expr, const std::unordered_map<std::string, std::string>& vars);
 std::string eval_string_template(const std::string& text, const std::unordered_map<std::string, std::string>& vars);
+
+struct YamlValue {
+  enum class Type { Null, Bool, Int, Double, String, List, Map };
+  Type type = Type::Null;
+  bool bool_value = false;
+  int64_t int_value = 0;
+  double double_value = 0.0;
+  std::string string_value;
+  std::vector<YamlValue> list_value;
+  std::unordered_map<std::string, YamlValue> map_value;
+};
+
+std::string eval_string_template(const std::string& text,
+                                 const std::unordered_map<std::string, std::string>& vars,
+                                 const std::unordered_map<std::string, YamlValue>* yaml_docs);
 
 class Processor {
 public:
@@ -68,9 +84,9 @@ private:
   std::unordered_set<std::string> arg_names_;
   std::string base_dir_;
   bool modified_ = false;
-  // Minimal YAML store for xacro.load_yaml(name) assigned to properties
-  // maps property-name -> { key -> vector of doubles }
-  std::unordered_map<std::string, std::unordered_map<std::string, std::vector<double>>> yaml_maps_;
+  std::unordered_map<std::string, std::unordered_set<std::string>> prop_deps_;
+  // YAML documents loaded via xacro.load_yaml()
+  std::unordered_map<std::string, YamlValue> yaml_docs_;
 
   bool loadDocument(const std::string& path, std::string* error_msg);
   bool processDocument(std::string* error_msg);

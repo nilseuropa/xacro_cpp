@@ -1,0 +1,10 @@
+a:
+  b:
+    - c: 1
+      d: "hello"
+    - c: 2
+      d: "world"
+flag: true
+num: 3.14
+text: "a string with spaces"
+nil_value: null

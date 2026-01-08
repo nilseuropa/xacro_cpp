@@ -11,6 +11,8 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 # Try both common TinyXML2 package names and fall back to a raw library
 find_package(TinyXML2 QUIET)
 find_package(tinyxml2 QUIET)
+find_package(yaml_cpp_vendor QUIET)
+find_package(yaml-cpp REQUIRED)
 
 set(TINYXML2_TARGET "")
 if(TARGET TinyXML2::TinyXML2)
@@ -41,6 +43,7 @@ if(TARGET ament_index_cpp::ament_index_cpp)
   target_link_libraries(xacro_cpp_lib PUBLIC ament_index_cpp::ament_index_cpp)
 endif()
 target_link_libraries(xacro_cpp_lib PRIVATE ${TINYXML2_TARGET})
+target_link_libraries(xacro_cpp_lib PUBLIC yaml-cpp)
 
 # Provide a convenient namespaced alias for consumers
 add_library(xacro_cpp::xacro_cpp ALIAS xacro_cpp_lib)
@@ -102,5 +105,6 @@ if(ament_cmake_FOUND)
   if(TARGET ament_index_cpp::ament_index_cpp)
     ament_export_dependencies(ament_index_cpp)
   endif()
+  ament_export_dependencies(yaml_cpp_vendor yaml-cpp)
   ament_package()
 endif()
