@@ -51,6 +51,7 @@ std::string eval_string_template(const std::string& text,
 
 class Processor {
 public:
+  // Core xacro expansion pipeline: load, collect, expand, and serialize.
   Processor();
   ~Processor();
 
@@ -58,6 +59,7 @@ public:
     std::string name;
     std::string default_value; // optional
     bool is_block = false;     // xacro block parameter (params prefixed with '*')
+    bool has_default = false;  // distinguishes explicit empty default from missing default
   };
   struct MacroDef {
     std::string name;
@@ -85,6 +87,7 @@ private:
   std::string base_dir_;
   bool modified_ = false;
   std::unordered_map<std::string, std::unordered_set<std::string>> prop_deps_;
+  std::unordered_map<std::string, std::vector<tinyxml2::XMLNode*>> property_blocks_;
   // YAML documents loaded via xacro.load_yaml()
   std::unordered_map<std::string, YamlValue> yaml_docs_;
 

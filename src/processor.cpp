@@ -38,6 +38,7 @@ namespace xacro_cpp {
 static constexpr char kDollarMarker = '\x1D'; // placeholder used to keep escaped '$' stable across passes
 static constexpr std::string_view kXacroPrefix = "xacro:";
 
+// ---- Path helpers / package discovery ----
 static std::string dirname(const std::string& path) {
   auto pos = path.find_last_of("/\\");
   if (pos == std::string::npos) {
@@ -126,6 +127,7 @@ inline void throw_from_error_msg(std::string* error_msg, const char* fallback) {
 
 } // namespace
 
+// ---- Filesystem / package lookups ----
 static void detect_current_package_from(const std::string& start_dir) {
   g_current_pkg_name.clear();
   g_current_pkg_root.clear();
@@ -241,7 +243,11 @@ double eval_number(const std::string& expr, const std::unordered_map<std::string
   return res;
 }
 
+static bool is_simple_identifier(const std::string& s);
+static bool has_unknown_identifier(const std::string& expr, const std::unordered_map<std::string, std::string>& vars);
+
 bool eval_bool(const std::string& expr, const std::unordered_map<std::string, std::string>& vars) {
+  // Emulates Python xacro truthiness: strict boolean/number expressions only.
   // Normalize optional ${...} wrapper (common in xacro:if/unless).
   auto trim = [](const std::string& s) -> std::string {
     size_t i = 0, j = s.size();
@@ -276,8 +282,12 @@ bool eval_bool(const std::string& expr, const std::unordered_map<std::string, st
   }
   // Numeric expression
   bool ok = false;
+  bool has_unknown = has_unknown_identifier(expr_trim, vars);
   double v = eval_number(expr_trim, vars, &ok);
   if (ok) {
+    if (has_unknown) {
+      throw ProcessingError("invalid boolean expression: " + expr_trim);
+    }
     return v != 0.0;
   }
   // Fallback: comparison operators with identifiers, quoted strings or numeric literals
@@ -392,11 +402,31 @@ bool eval_bool(const std::string& expr, const std::unordered_map<std::string, st
     }
   } catch (...) {
   }
-  // Fallback: non-empty string that is not "0" or "false"
-  if (t == "0" || t.empty()) {
-    return false;
+  if (is_simple_identifier(expr_trim)) {
+    auto it = vars.find(expr_trim);
+    if (it != vars.end()) {
+      std::string v = trim_lower(it->second);
+      if (v == "true") {
+        return true;
+      }
+      if (v == "false" || v == "0" || v.empty()) {
+        return false;
+      }
+      char* end = nullptr;
+      double d = std::strtod(it->second.c_str(), &end);
+      if (end && *end == '\0') {
+        return d != 0.0;
+      }
+      return true;
+    }
+    throw ProcessingError("invalid boolean expression: " + expr_trim);
   }
-  return true;
+  if (expr_trim.size() >= 2
+      && ((expr_trim.front() == '"' && expr_trim.back() == '"')
+          || (expr_trim.front() == '\'' && expr_trim.back() == '\''))) {
+    return expr_trim.size() > 2;
+  }
+  throw ProcessingError("invalid boolean expression: " + expr_trim);
 }
 
 static std::string replace_all(std::string s, const std::string& from, const std::string& to) {
@@ -1149,6 +1179,7 @@ bool Processor::isXacroElement(const tinyxml2::XMLElement* el, const char* local
 std::string eval_string_with_vars(const std::string& expr,
                                   const std::unordered_map<std::string, std::string>& vars,
                                   bool* resolved = nullptr) {
+  // Evaluate a minimal numeric expression if all identifiers are known; otherwise leave literal.
   if (resolved) {
     *resolved = false;
   }
@@ -1200,6 +1231,7 @@ static std::string eval_string_template(const std::string& text,
                                         const std::unordered_map<std::string, std::string>& vars,
                                         const std::unordered_map<std::string, YamlValue>* yaml_docs,
                                         std::vector<std::string>* resolve_stack) {
+  // Resolve ${...}, then $(arg ...), then $(find ...) while preserving escaped "$$".
   auto resolve_var = [&](const std::string& name) -> std::string {
     auto it = vars.find(name);
     if (it == vars.end()) {
@@ -1401,6 +1433,7 @@ bool Processor::runToString(const Options& opts, std::string* urdf_xml, std::str
   macros_.clear();
   arg_names_.clear();
   prop_deps_.clear();
+  property_blocks_.clear();
   for (const auto& kv : opts.cli_args)
     vars_[kv.first] = kv.second;
 
@@ -1435,6 +1468,7 @@ bool Processor::collectArgs(const Options& opts, std::map<std::string, std::stri
   // initialize argument map with CLI overrides
   vars_.clear();
   macros_.clear();
+  property_blocks_.clear();
   for (const auto& kv : opts.cli_args)
     vars_[kv.first] = kv.second;
   // Only collect args and properties; do not expand macros/includes
@@ -1466,6 +1500,7 @@ bool Processor::loadDocument(const std::string& path, std::string* error_msg) {
 }
 
 bool Processor::processDocument(std::string* error_msg) {
+  // Pass pipeline: collect globals, expand includes, collect again, then expand macros/ifs.
   // 1) collect args/props that may affect include paths
   if (!passCollectArgsAndProps(error_msg)) {
     return false;
@@ -1489,6 +1524,14 @@ bool Processor::processDocument(std::string* error_msg) {
 
 bool Processor::defineProperty(const tinyxml2::XMLElement* el) {
   std::string name = getAttr(el, "name");
+  if (!name.empty() && el->FirstChildElement()) {
+    std::vector<tinyxml2::XMLNode*> blocks;
+    for (auto* child = el->FirstChild(); child; child = child->NextSibling()) {
+      blocks.push_back(child->DeepClone(doc_));
+    }
+    property_blocks_[name] = std::move(blocks);
+    return true;
+  }
   std::string value = getAttr(el, "value");
   if (value.empty()) {
     const char* text = el->GetText();
@@ -1655,6 +1698,7 @@ bool Processor::passCollectArgsAndProps(std::string* /*error_msg*/) {
 }
 
 static std::vector<Processor::MacroParam> parse_params(const std::string& s) {
+  // Split macro params while respecting quoted defaults and block params.
   std::vector<Processor::MacroParam> out;
   std::vector<std::string> tokens;
   std::string tok;
@@ -1714,9 +1758,11 @@ static std::vector<Processor::MacroParam> parse_params(const std::string& s) {
       p.name = raw_tok.substr(0, pos);
       p.default_value = raw_tok.substr(pos + pos_len);
       p.default_value = strip_quotes(trim_ws(p.default_value));
+      p.has_default = true;
     } else {
       p.name = raw_tok;
       p.default_value.clear();
+      p.has_default = false;
     }
     p.name = trim_ws(p.name);
     while (!p.name.empty() && p.name[0] == '*') {
@@ -1729,6 +1775,7 @@ static std::vector<Processor::MacroParam> parse_params(const std::string& s) {
 }
 
 bool Processor::defineMacro(tinyxml2::XMLElement* el) {
+  // Register macro and clone its body into the document for later expansion.
   std::string name = getAttr(el, "name");
   std::string params = getAttr(el, "params");
   MacroDef def;
@@ -1752,6 +1799,7 @@ bool Processor::defineMacro(tinyxml2::XMLElement* el) {
 }
 
 void Processor::removeComments(tinyxml2::XMLNode* node) {
+  // Drop XML comments but preserve whitespace separators between adjacent text nodes.
   if (!node) {
     return;
   }
@@ -1904,6 +1952,7 @@ static void insert_before(tinyxml2::XMLNode* parent, tinyxml2::XMLNode* ref, tin
 }
 
 bool Processor::expandIncludesInNode(tinyxml2::XMLNode* node, const std::string& base_dir, std::string* error_msg) {
+  // Include expansion is conditional-aware: inactive branches are skipped.
   if (!node) {
     return true;
   }
@@ -2015,6 +2064,7 @@ bool Processor::passExpandIncludes(std::string* error_msg) {
 }
 
 bool Processor::handleIfUnless(tinyxml2::XMLElement* el, std::vector<tinyxml2::XMLNode*>* inserted_out) {
+  // Splice children into the parent if the condition is true; otherwise remove.
   if (isXacroElement(el, "if") || isXacroElement(el, "unless")) {
     std::string cond = getAttr(el, "value");
     std::string cond_eval = eval_string_template(cond, vars_, &yaml_docs_);
@@ -2048,6 +2098,7 @@ bool Processor::handleIfUnless(tinyxml2::XMLElement* el, std::vector<tinyxml2::X
 
 bool Processor::expandXacroElement(tinyxml2::XMLElement* el,
                                    const std::unordered_map<std::string, std::string>& scope) {
+  // xacro:element dynamically renames the current element.
   if (!isXacroElement(el, "element")) {
     return false;
   }
@@ -2142,6 +2193,7 @@ const Processor::MacroDef* Processor::findMacro(const std::vector<std::string>& 
 bool Processor::expandMacroCall(tinyxml2::XMLElement* el,
                                 const std::unordered_map<std::string, std::string>& parent_scope,
                                 const std::unordered_map<std::string, std::vector<tinyxml2::XMLNode*>>* parent_blocks) {
+  // Expand a macro call in-place, creating a fresh local scope for params and blocks.
   auto is_known_xacro_tag = [](const std::string& name) {
     return name == "macro" || name == "property" || name == "arg" || name == "include" || name == "if"
       || name == "unless" || name == "element" || name == "attribute" || name == "insert_block" || name == "call";
@@ -2214,7 +2266,10 @@ bool Processor::expandMacroCall(tinyxml2::XMLElement* el,
   std::vector<tinyxml2::XMLNode*> call_blocks;
   for (auto* ch = el->FirstChild(); ch; ch = ch->NextSibling()) {
     auto* chel = ch->ToElement();
-    if (parent_blocks && chel && isXacroElement(chel, "insert_block")) {
+    if (!chel) {
+      continue; // block args ignore non-element nodes
+    }
+    if (parent_blocks && isXacroElement(chel, "insert_block")) {
       std::string bname = getAttr(chel, "name");
       auto itpb = parent_blocks->find(bname);
       if (itpb != parent_blocks->end()) {
@@ -2244,21 +2299,18 @@ bool Processor::expandMacroCall(tinyxml2::XMLElement* el,
       ++block_arg_idx;
     } else {
       const char* av = el->Attribute(p.name.c_str());
+      if (!av && !p.has_default) {
+        throw ProcessingError("missing required parameter '" + p.name + "' for macro '" + m.name + "'");
+      }
       raw_params.push_back({p.name, av ? std::string(av) : p.default_value, av != nullptr});
     }
   }
-  // Resolve parameters in definition order. Call-site attributes are evaluated in
-  // the parent scope; defaults may reference previously bound params.
+  // Resolve parameters in definition order. Call-site attributes and defaults are evaluated
+  // strictly in the parent scope (caller), not in terms of other macro params.
   const std::unordered_map<std::string, std::string> base_scope = scope;
   std::unordered_map<std::string, std::string> evaluated_params;
   for (const auto& rp : raw_params) {
-    std::unordered_map<std::string, std::string> eval_scope = base_scope;
-    if (!rp.from_attr) {
-      for (const auto& ep : evaluated_params) {
-        eval_scope[ep.first] = ep.second;
-      }
-    }
-    std::string v = eval_string_template(rp.value, eval_scope, &yaml_docs_);
+    std::string v = eval_string_template(rp.value, base_scope, &yaml_docs_);
     evaluated_params[rp.name] = v;
   }
   scope = base_scope;
@@ -2419,6 +2471,7 @@ bool Processor::expandMacroCall(tinyxml2::XMLElement* el,
 }
 
 bool Processor::expandElement(tinyxml2::XMLElement* el) {
+  // Expand one xacro element; return whether the node should remain for traversal.
   // Handle inline properties/args defined inside expanded content
   if (isXacroElement(el, "property")) {
     defineProperty(el);
@@ -2458,12 +2511,29 @@ bool Processor::expandElement(tinyxml2::XMLElement* el) {
     applyXacroAttribute(el, vars_);
     return false;
   }
+  if (isXacroElement(el, "insert_block")) {
+    std::string bname = getAttr(el, "name");
+    auto it = property_blocks_.find(bname);
+    auto* parent = el->Parent();
+    if (parent) {
+      if (it != property_blocks_.end()) {
+        for (auto* bn : it->second) {
+          if (bn) {
+            insert_before(parent, el, bn->DeepClone(doc_));
+          }
+        }
+      }
+      parent->DeleteChild(el);
+    }
+    modified_ = true;
+    return false;
+  }
   substituteAttributes(el);
   return true; // el remains; traverse its children
 }
 
 bool Processor::expandNode(tinyxml2::XMLNode* node) {
-  // DFS traversal
+  // DFS traversal that expands xacro elements and performs text substitutions.
   std::vector<tinyxml2::XMLNode*> st;
   st.push_back(node);
   while (!st.empty()) {
@@ -2492,6 +2562,7 @@ bool Processor::expandNode(tinyxml2::XMLNode* node) {
 }
 
 void Processor::restoreDollarMarkers(tinyxml2::XMLNode* node) {
+  // Restore escaped "$$" markers after all substitutions complete.
   if (!node) {
     return;
   }
@@ -2529,6 +2600,7 @@ void Processor::restoreDollarMarkers(tinyxml2::XMLNode* node) {
 }
 
 bool Processor::passExpand(std::string* /*error_msg*/) {
+  // Re-run expansion until a fixed point (or safety cap) to match Python xacro behavior.
   // Iterate expansion until a fixed point or safety limit
   for (int iter = 0; iter < 10; ++iter) {
     modified_ = false;
