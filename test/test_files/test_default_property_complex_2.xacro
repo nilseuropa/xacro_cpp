@@ -1,0 +1,9 @@
+<a xmlns:xacro="http://www.ros.org/xacro">
+    <xacro:include filename="test_default_property_complex_2_include.xacro"/>
+    <xacro:property name="prop" value="false"/>
+    <xacro:include filename="test_default_property_complex_2_include.xacro"/>
+
+    <xacro:unless value="${prop}">
+            <foo/>
+    </xacro:unless>
+</a>

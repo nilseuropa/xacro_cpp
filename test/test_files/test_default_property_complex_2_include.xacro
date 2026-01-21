@@ -1,0 +1,7 @@
+<a xmlns:xacro="http://www.ros.org/xacro">
+    <xacro:property name="prop" default="true"/>
+    <xacro:unless value="${prop}">
+        <foo/>
+        <xacro:property name="prop" value="true"/>
+    </xacro:unless>
+</a>

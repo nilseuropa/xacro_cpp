@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:macro name="outer" params="name">
+    <xacro:macro name="inner" params="suffix">
+      <link name="${name}_${suffix}"/>
+    </xacro:macro>
+    <xacro:inner suffix="a"/>
+    <xacro:inner suffix="b"/>
+  </xacro:macro>
+
+  <xacro:outer name="one"/>
+  <xacro:outer name="two"/>
+</robot>

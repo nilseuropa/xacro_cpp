@@ -2,7 +2,7 @@
     <xacro:property name="prop" default="false"/>
     <xacro:unless value="${prop}">
         <foo/>
-        <xacro:property name="prop" value="true"/>
+        <xacro:property name="prop" value="false"/>
     </xacro:unless>
 
     <!-- second foo should be ignored -->

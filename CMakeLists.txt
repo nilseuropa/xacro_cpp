@@ -30,8 +30,10 @@ else()
 endif()
 
 add_library(xacro_cpp_lib
+  src/expr.cpp
   src/processor.cpp
   src/tinyexpr.c
+  src/yaml.cpp
 )
 target_include_directories(xacro_cpp_lib PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>

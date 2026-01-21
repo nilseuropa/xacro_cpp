@@ -10,6 +10,7 @@
 #include <iostream>
 #include <map>
 #include <string>
+#include <unordered_map>
 
 #include "gtest/gtest.h"
 
@@ -21,6 +22,7 @@ namespace py = pybind11;
 
 using xacro_cpp::Options;
 using xacro_cpp::Processor;
+using xacro_cpp::evalBool;
 
 using namespace testing;
 
@@ -95,8 +97,8 @@ if isinstance(getattr(_xacro, "_global_symbols", None), dict):
 
     Options opt;
 
-    opt.input_path = input;
-    opt.output_path = output;
+    opt.mInputPath = input;
+    opt.mOutputPath = output;
 
     Processor p;
     std::string err;
@@ -113,9 +115,9 @@ if isinstance(getattr(_xacro, "_global_symbols", None), dict):
 
     Options opt;
 
-    opt.input_path = input;
-    opt.output_path = output;
-    opt.cli_args = {{key, value}};
+    opt.mInputPath = input;
+    opt.mOutputPath = output;
+    opt.mCliArgs = {{key, value}};
 
     Processor p;
     std::string err;
@@ -217,6 +219,16 @@ TEST_F(XacroTestFixture, basic_operations) {
   parseAndCompare("basic_operations");
 }
 
+TEST(XacroEvalBool, handles_comparators) {
+  const std::unordered_map<std::string, std::string> vars;
+  EXPECT_TRUE(evalBool("1 < 2", vars));
+  EXPECT_TRUE(evalBool("2 <= 2", vars));
+  EXPECT_TRUE(evalBool("3 > 2", vars));
+  EXPECT_TRUE(evalBool("3 >= 3", vars));
+  EXPECT_FALSE(evalBool("2 < 1", vars));
+  EXPECT_FALSE(evalBool("2 > 3", vars));
+}
+
 TEST_F(XacroTestFixture, parenthesis) {
   parseAndCompare("parenthesis");
 }
@@ -283,6 +295,10 @@ TEST_F(XacroTestFixture, macro_cross_parameter_cpp_only) {
 
 TEST_F(XacroTestFixture, macro_block_parameters) {
   parseAndCompare("macros_block");
+}
+
+TEST_F(XacroTestFixture, test_nested_macro_restore) {
+  parseAndCompare("test_nested_macro_restore");
 }
 
 TEST_F(XacroTestFixture, conditional_else_chains) {
@@ -402,11 +418,16 @@ TEST_F(XacroTestFixture, test_insert_block_property) {
 TEST_F(XacroTestFixture, test_include) {
   parseAndCompare("test_include");
 }
+TEST_F(XacroTestFixture, test_include_find_missing_package) {
+  parseAndExpectFailure("test_include_find_missing_package");
+}
 TEST_F(XacroTestFixture, test_include_glob) {
   GTEST_SKIP() << "Disabled, include patterns not supported";
   parseAndCompare("test_include_glob");
 }
-/// Note: test_include_nonexistent already present in our tests
+TEST_F(XacroTestFixture, test_include_nonexistent) {
+  parseAndExpectFailure("test_include_nonexistent");
+}
 TEST_F(XacroTestFixture, test_include_from_variable) {
   parseAndCompare("test_include_from_variable");
 }
@@ -608,8 +629,19 @@ TEST_F(XacroTestFixture, test_macro_default_param_evaluation_order) {
   // Expected: <a><f val="21"/><f val="someString"/></a>
 }
 TEST_F(XacroTestFixture, test_default_property) {
-  GTEST_SKIP() << "Disabled, default property semantics not supported yet (CAS-578)";
   parseAndCompare("test_default_property");
+  // Expected: <a><foo/></a>
+}
+TEST_F(XacroTestFixture, test_default_property_complex) {
+  parseAndCompare("test_default_property_complex");
+  // Expected: <a><foo/></a>
+}
+TEST_F(XacroTestFixture, test_default_property_expressions) {
+  parseAndCompare("test_default_property_expressions");
+  // Expected: <a><foo val="3"/><bar val="20"/></a>
+}
+TEST_F(XacroTestFixture, test_default_property_complex_2) {
+  parseAndCompare("test_default_property_complex_2");
   // Expected: <a><foo/></a>
 }
 // Note: test_unicode_* are ommitted, tests related to process return values and command line syntax are ommitted
@@ -629,6 +661,12 @@ TEST_F(XacroTestFixture, test_block_double_star_insert) {
 }
 TEST_F(XacroTestFixture, test_introduction_example) {
   parseAndCompare("test_introduction_example");
+}
+TEST_F(XacroTestFixture, test_conditional_include_based_on_macro_param) {
+  parseAndCompare("test_conditional_include_based_on_macro_param");
+}
+TEST_F(XacroTestFixture, test_conditional_include_based_on_arg) {
+  parseAndCompareWithArg("test_conditional_include_based_on_arg", "version", "2");
 }
 
 

@@ -1,3 +1,7 @@
+/// NowTechnologies Zrt. All rights reserved.
+/// xacro_cpp CLI entry point.
+/// Author: nilseuropa <marton@nowtech.hu>
+/// Created: 2026.01.20
 #include <iostream>
 #include <string>
 #include <unordered_map>
@@ -7,29 +11,29 @@
 using xacro_cpp::Options;
 using xacro_cpp::Processor;
 
-static void print_usage() {
+static void printUsage() {
   std::cerr << "Usage: xacro_cpp input.xacro [-o output.xml] [name:=value ...]\n";
 }
 
 int main(int argc, char** argv) {
   if (argc < 2) {
-    print_usage();
+    printUsage();
     return 1;
   }
 
   Options opts;
-  opts.input_path = argv[1];
+  opts.mInputPath = argv[1];
   for (int i = 2; i < argc; ++i) {
     std::string a = argv[i];
     if (a == "-o" && i + 1 < argc) {
-      opts.output_path = argv[++i];
+      opts.mOutputPath = argv[++i];
       continue;
     }
     auto pos = a.find(":=");
     if (pos != std::string::npos) {
       std::string name = a.substr(0, pos);
       std::string value = a.substr(pos + 2);
-      opts.cli_args[name] = value;
+      opts.mCliArgs[name] = value;
     }
   }
 

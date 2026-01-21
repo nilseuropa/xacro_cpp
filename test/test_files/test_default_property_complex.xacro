@@ -3,6 +3,7 @@
     <xacro:unless value="${prop}">
         <foo/>
         <xacro:property name="prop" value="true"/>
+        <xacro:include filename="test_default_property_complex_include.xacro"/>
     </xacro:unless>
 
     <!-- second foo should be ignored -->

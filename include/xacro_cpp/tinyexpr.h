@@ -1,38 +1,40 @@
-// Minimal embed of tinyexpr (public domain): https://github.com/codeplea/tinyexpr
-// Slightly namespaced to avoid symbol clashes.
-
+/// NowTechnologies Zrt. All rights reserved.
+/// Embedded tinyexpr interface adapted for xacro_cpp.
+/// Author: nilseuropa <marton@nowtech.hu>
+/// Created: 2026.01.20
+/// Based on tinyexpr (public domain): https://github.com/codeplea/tinyexpr
 #pragma once
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct te_expr {
-  int type;
+typedef struct TeExpr {
+  int mType;
   union {
-    double value;
-    const void* bound;
-    const void* function;
-  } u;
-  struct te_expr* parameters[1];
-} te_expr;
+    double mValue;
+    const void* mBound;
+    const void* mFunction;
+  } mU;
+  struct TeExpr* mParameters[1];
+} TeExpr;
 
-typedef double (*te_fun2)(double, double);
-typedef double (*te_fun1)(double);
+typedef double (*TeFun2)(double, double);
+typedef double (*TeFun1)(double);
 
-typedef struct te_variable {
-  const char* name;
-  const void* address;
-  int type;
-  void* context;
-} te_variable;
+typedef struct TeVariable {
+  const char* mName;
+  const void* mAddress;
+  int mType;
+  void* mContext;
+} TeVariable;
 
-enum { TE_VARIABLE = 0x0100, TE_FUNCTION1 = 0x0200, TE_FUNCTION2 = 0x0400, TE_FLAG_PURE = 0x0800 };
+enum { cTeVariable = 0x0100, cTeFunction1 = 0x0200, cTeFunction2 = 0x0400, cTeFlagPure = 0x0800 };
 
-double te_interp(const char* expression, int* error);
-te_expr* te_compile(const char* expression, const te_variable* variables, int var_count, int* error);
-double te_eval(const te_expr* n);
-void te_free(te_expr* n);
+double teInterp(const char* expression, int* error);
+TeExpr* teCompile(const char* expression, const TeVariable* variables, int varCount, int* error);
+double teEval(const TeExpr* n);
+void teFree(TeExpr* n);
 
 #ifdef __cplusplus
 }

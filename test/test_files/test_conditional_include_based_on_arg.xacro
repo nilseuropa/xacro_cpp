@@ -1,0 +1,14 @@
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+<xacro:macro name="foo">
+  <!-- Get version from arg -->
+  <xacro:property name="version" value="$(arg version)" />
+  <xacro:if value="${version == 2}">
+    <xacro:include filename="test_conditional_include_params.xacro"/>
+  </xacro:if>
+  <origin xyz="${a+sx*x} ${b+sy*y} ${c+sz*z}" rpy="${a-x} ${b/sy} ${c*-sz}" />
+</xacro:macro>
+
+<xacro:foo />
+
+</robot>

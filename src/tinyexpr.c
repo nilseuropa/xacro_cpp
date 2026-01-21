@@ -1,3 +1,8 @@
+/// NowTechnologies Zrt. All rights reserved.
+/// Embedded tinyexpr implementation adapted for xacro_cpp.
+/// Author: nilseuropa <marton@nowtech.hu>
+/// Created: 2026.01.20
+/// Based on tinyexpr (public domain): https://github.com/codeplea/tinyexpr
 #include "xacro_cpp/tinyexpr.h"
 
 #include <ctype.h>
@@ -5,228 +10,251 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* This is a very small subset of tinyexpr sufficient for basic math. */
+/// This is a very small subset of tinyexpr sufficient for basic math.
 
-static double eval_func(const char* name, int len, double arg, int* handled) {
-  /* Recognize a handful of math functions used by xacro: sin, cos, exp, abs, fabs. */
+static double evalFunc(const char* name, int len, double arg, int* handled) {
+  /// Recognize a handful of math functions used by xacro: sin, cos, exp, abs, fabs.
   *handled = 1;
-  if (len == 3 && name[0] == 's' && name[1] == 'i' && name[2] == 'n')
+  if (len == 3 && name[0] == 's' && name[1] == 'i' && name[2] == 'n') {
     return sin(arg);
-  if (len == 3 && name[0] == 'c' && name[1] == 'o' && name[2] == 's')
+  }
+  if (len == 3 && name[0] == 'c' && name[1] == 'o' && name[2] == 's') {
     return cos(arg);
-  if (len == 3 && name[0] == 'e' && name[1] == 'x' && name[2] == 'p')
+  }
+  if (len == 3 && name[0] == 'e' && name[1] == 'x' && name[2] == 'p') {
     return exp(arg);
-  if (len == 3 && name[0] == 'a' && name[1] == 'b' && name[2] == 's')
+  }
+  if (len == 3 && name[0] == 'a' && name[1] == 'b' && name[2] == 's') {
     return fabs(arg);
-  if (len == 4 && name[0] == 'f' && name[1] == 'a' && name[2] == 'b' && name[3] == 's')
+  }
+  if (len == 4 && name[0] == 'f' && name[1] == 'a' && name[2] == 'b' && name[3] == 's') {
     return fabs(arg);
+  }
   *handled = 0;
   return 0.0;
 }
 
-typedef struct state {
-  const char* start;
-  const char* next;
-  int type;
-  te_variable* lookup;
-  int lookup_len;
-} state;
+typedef struct State {
+  const char* mStart;
+  const char* mNext;
+  int mType;
+  TeVariable* mLookup;
+  int mLookupLen;
+} State;
 
 enum {
-  TOK_NULL = 0,
-  TOK_NUMBER = 1,
-  TOK_VARIABLE,
-  TOK_PLUS = '+',
-  TOK_MINUS = '-',
-  TOK_MUL = '*',
-  TOK_DIV = '/',
-  TOK_OPEN = '(',
-  TOK_CLOSE = ')'
+  cTokNull = 0,
+  cTokNumber = 1,
+  cTokVariable,
+  cTokPlus = '+',
+  cTokMinus = '-',
+  cTokMul = '*',
+  cTokDiv = '/',
+  cTokOpen = '(',
+  cTokClose = ')'
 };
 
-static void next_token(state* s) {
-  s->type = TOK_NULL;
-  while (*s->next && isspace((unsigned char)*s->next))
-    s->next++;
-  if (!*s->next)
+static void nextToken(State* s) {
+  s->mType = cTokNull;
+  while (*s->mNext && isspace((unsigned char)*s->mNext)) {
+    s->mNext++;
+  }
+  if (!*s->mNext) {
     return;
-  char c = *s->next;
+  }
+  char c = *s->mNext;
   if (c == '+' || c == '-' || c == '*' || c == '/' || c == '(' || c == ')') {
-    s->type = c;
-    s->next++;
+    s->mType = c;
+    s->mNext++;
     return;
   }
   if (isdigit((unsigned char)c) || c == '.') {
-    s->start = s->next;
-    while (isdigit((unsigned char)*s->next) || *s->next == '.' || *s->next == 'e' || *s->next == 'E' || *s->next == '+'
-           || *s->next == '-') {
-      if ((s->next == s->start || (*(s->next - 1) != 'e' && *(s->next - 1) != 'E'))
-          && (*s->next == '+' || *s->next == '-'))
+    s->mStart = s->mNext;
+    while (isdigit((unsigned char)*s->mNext) || *s->mNext == '.' || *s->mNext == 'e' || *s->mNext == 'E'
+           || *s->mNext == '+' || *s->mNext == '-') {
+      if ((s->mNext == s->mStart || (*(s->mNext - 1) != 'e' && *(s->mNext - 1) != 'E'))
+          && (*s->mNext == '+' || *s->mNext == '-')) {
         break;
-      s->next++;
+      }
+      s->mNext++;
     }
-    s->type = TOK_NUMBER;
+    s->mType = cTokNumber;
     return;
   }
   if (isalpha((unsigned char)c) || c == '_') {
-    s->start = s->next;
-    while (isalnum((unsigned char)*s->next) || *s->next == '_')
-      s->next++;
-    s->type = TOK_VARIABLE;
+    s->mStart = s->mNext;
+    while (isalnum((unsigned char)*s->mNext) || *s->mNext == '_') {
+      s->mNext++;
+    }
+    s->mType = cTokVariable;
     return;
   }
-  s->next++;
+  s->mNext++;
 }
 
-static te_expr* new_expr(int type, te_expr* a, te_expr* b) {
-  te_expr* e = (te_expr*)malloc(sizeof(te_expr) + (b ? 2 : 1) * sizeof(te_expr*));
-  e->type = type;
-  e->u.value = 0;
-  e->parameters[0] = a;
-  if (b)
-    e->parameters[1] = b;
+static TeExpr* newExpr(int type, TeExpr* a, TeExpr* b) {
+  TeExpr* e = (TeExpr*)malloc(sizeof(TeExpr) + (b ? 2 : 1) * sizeof(TeExpr*));
+  e->mType = type;
+  e->mU.mValue = 0;
+  e->mParameters[0] = a;
+  if (b) {
+    e->mParameters[1] = b;
+  }
   return e;
 }
 
-static te_expr* new_value(double v) {
-  te_expr* e = new_expr(TOK_NUMBER, NULL, NULL);
-  e->u.value = v;
+static TeExpr* newValue(double v) {
+  TeExpr* e = newExpr(cTokNumber, NULL, NULL);
+  e->mU.mValue = v;
   return e;
 }
 
-static int var_index(state* s, const char* name, int len) {
-  for (int i = 0; i < s->lookup_len; i++) {
-    const char* n = s->lookup[i].name;
-    if ((int)strlen(n) == len && strncmp(n, name, len) == 0)
+static int varIndex(State* s, const char* name, int len) {
+  for (int i = 0; i < s->mLookupLen; i++) {
+    const char* n = s->mLookup[i].mName;
+    if ((int)strlen(n) == len && strncmp(n, name, len) == 0) {
       return i;
+    }
   }
   return -1;
 }
 
-static te_expr* parse_expr(state* s);
+static TeExpr* parseExpr(State* s);
 
-static te_expr* parse_primary(state* s) {
-  if (s->type == TOK_NUMBER) {
-    double v = strtod(s->start, NULL);
-    te_expr* e = new_value(v);
-    next_token(s);
+static TeExpr* parsePrimary(State* s) {
+  if (s->mType == cTokNumber) {
+    double v = strtod(s->mStart, NULL);
+    TeExpr* e = newValue(v);
+    nextToken(s);
     return e;
-  } else if (s->type == TOK_VARIABLE) {
-    const char* name = s->start;
-    int len = (int)(s->next - s->start);
-    const char* after = s->next;
-    while (*after && isspace((unsigned char)*after))
+  } else if (s->mType == cTokVariable) {
+    const char* name = s->mStart;
+    int len = (int)(s->mNext - s->mStart);
+    const char* after = s->mNext;
+    while (*after && isspace((unsigned char)*after)) {
       ++after;
+    }
     if (*after == '(') {
-      /* Function call with a single argument. */
-      s->next = after;
-      next_token(s); /* consume '(' */
-      next_token(s); /* move to first token in arg */
-      te_expr* arg = parse_expr(s);
-      if (s->type == TOK_CLOSE)
-        next_token(s);
+      /// Function call with a single argument.
+      s->mNext = after;
+      /// consume '('
+      nextToken(s);
+      /// move to first token in arg
+      nextToken(s);
+      TeExpr* arg = parseExpr(s);
+      if (s->mType == cTokClose) {
+        nextToken(s);
+      }
       int handled = 0;
-      double v = eval_func(name, len, arg ? arg->u.value : 0.0, &handled);
-      te_expr* e = new_value(handled ? v : 0.0);
-      if (arg)
+      double v = evalFunc(name, len, arg ? arg->mU.mValue : 0.0, &handled);
+      TeExpr* e = newValue(handled ? v : 0.0);
+      if (arg) {
         free(arg);
+      }
       return e;
     } else {
-      int idx = var_index(s, name, len);
+      int idx = varIndex(s, name, len);
       double v = 0.0;
-      if (idx >= 0)
-        v = *(const double*)s->lookup[idx].address;
-      te_expr* e = new_value(v);
-      next_token(s);
+      if (idx >= 0) {
+        v = *(const double*)s->mLookup[idx].mAddress;
+      }
+      TeExpr* e = newValue(v);
+      nextToken(s);
       return e;
     }
-  } else if (s->type == TOK_OPEN) {
-    next_token(s);
-    te_expr* e = parse_expr(s);
-    if (s->type == TOK_CLOSE)
-      next_token(s);
+  } else if (s->mType == cTokOpen) {
+    nextToken(s);
+    TeExpr* e = parseExpr(s);
+    if (s->mType == cTokClose) {
+      nextToken(s);
+    }
     return e;
-  } else if (s->type == TOK_MINUS) {
-    next_token(s);
-    te_expr* e = parse_primary(s);
-    e->u.value = -e->u.value;
+  } else if (s->mType == cTokMinus) {
+    nextToken(s);
+    TeExpr* e = parsePrimary(s);
+    e->mU.mValue = -e->mU.mValue;
     return e;
-  } else if (s->type == TOK_PLUS) {
-    next_token(s);
-    te_expr* e = parse_primary(s);
+  } else if (s->mType == cTokPlus) {
+    nextToken(s);
+    TeExpr* e = parsePrimary(s);
     return e;
   }
-  return new_value(0.0);
+  return newValue(0.0);
 }
 
-static te_expr* parse_term(state* s) {
-  te_expr* e = parse_primary(s);
+static TeExpr* parseTerm(State* s) {
+  TeExpr* e = parsePrimary(s);
   for (;;) {
-    if (s->type == TOK_MUL) {
-      next_token(s);
-      te_expr* r = parse_primary(s);
-      e->u.value *= r->u.value;
+    if (s->mType == cTokMul) {
+      nextToken(s);
+      TeExpr* r = parsePrimary(s);
+      e->mU.mValue *= r->mU.mValue;
       free(r);
-    } else if (s->type == TOK_DIV) {
-      next_token(s);
-      te_expr* r = parse_primary(s);
-      e->u.value /= r->u.value;
+    } else if (s->mType == cTokDiv) {
+      nextToken(s);
+      TeExpr* r = parsePrimary(s);
+      e->mU.mValue /= r->mU.mValue;
       free(r);
-    } else
+    } else {
       break;
+    }
   }
   return e;
 }
 
-static te_expr* parse_expr(state* s) {
-  te_expr* e = parse_term(s);
+static TeExpr* parseExpr(State* s) {
+  TeExpr* e = parseTerm(s);
   for (;;) {
-    if (s->type == TOK_PLUS) {
-      next_token(s);
-      te_expr* r = parse_term(s);
-      e->u.value += r->u.value;
+    if (s->mType == cTokPlus) {
+      nextToken(s);
+      TeExpr* r = parseTerm(s);
+      e->mU.mValue += r->mU.mValue;
       free(r);
-    } else if (s->type == TOK_MINUS) {
-      next_token(s);
-      te_expr* r = parse_term(s);
-      e->u.value -= r->u.value;
+    } else if (s->mType == cTokMinus) {
+      nextToken(s);
+      TeExpr* r = parseTerm(s);
+      e->mU.mValue -= r->mU.mValue;
       free(r);
-    } else
+    } else {
       break;
+    }
   }
   return e;
 }
 
-double te_interp(const char* expression, int* error) {
-  te_variable vars[1];
+double teInterp(const char* expression, int* error) {
+  TeVariable vars[1];
   (void)vars;
-  state s = {expression, expression, 0, NULL, 0};
-  next_token(&s);
-  te_expr* e = parse_expr(&s);
-  double v = e->u.value;
+  State s = {expression, expression, 0, NULL, 0};
+  nextToken(&s);
+  TeExpr* e = parseExpr(&s);
+  double v = e->mU.mValue;
   free(e);
-  if (error)
-    *error = (*s.next) ? 1 : 0;
+  if (error) {
+    *error = (*s.mNext) ? 1 : 0;
+  }
   return v;
 }
 
-te_expr* te_compile(const char* expression, const te_variable* variables, int var_count, int* error) {
-  state s;
-  s.start = expression;
-  s.next = expression;
-  s.lookup = (te_variable*)variables;
-  s.lookup_len = var_count;
-  next_token(&s);
-  te_expr* e = parse_expr(&s);
-  if (error)
-    *error = (*s.next) ? 1 : 0;
+TeExpr* teCompile(const char* expression, const TeVariable* variables, int varCount, int* error) {
+  State s;
+  s.mStart = expression;
+  s.mNext = expression;
+  s.mLookup = (TeVariable*)variables;
+  s.mLookupLen = varCount;
+  nextToken(&s);
+  TeExpr* e = parseExpr(&s);
+  if (error) {
+    *error = (*s.mNext) ? 1 : 0;
+  }
   return e;
 }
 
-double te_eval(const te_expr* n) {
-  return n ? n->u.value : 0.0;
+double teEval(const TeExpr* n) {
+  return n ? n->mU.mValue : 0.0;
 }
-void te_free(te_expr* n) {
-  if (n)
+void teFree(TeExpr* n) {
+  if (n) {
     free(n);
+  }
 }
