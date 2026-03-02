@@ -8,7 +8,7 @@
 
 namespace xacro_cpp {
 
-constexpr char kDollarMarker = '\x1D';
+constexpr char cDollarMarker = '\x1D';
 
 std::string evalStringWithVars(const std::string& expr,
                                const std::unordered_map<std::string, std::string>& vars,

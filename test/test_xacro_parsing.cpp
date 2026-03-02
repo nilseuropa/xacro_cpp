@@ -20,9 +20,9 @@
 namespace fs = std::filesystem;
 namespace py = pybind11;
 
+using xacro_cpp::evalBool;
 using xacro_cpp::Options;
 using xacro_cpp::Processor;
-using xacro_cpp::evalBool;
 
 using namespace testing;
 
@@ -202,8 +202,7 @@ def compare_xml_files(a, b):
     parse_cpp(test_files_path + file_name + ".xacro", cppResultFile);
 
     std::vector<std::string> diff;
-    ASSERT_TRUE(compareXML(test_files_path + file_name + "_expected.xml", cppResultFile, diff))
-      << vectorToString(diff);
+    ASSERT_TRUE(compareXML(test_files_path + file_name + "_expected.xml", cppResultFile, diff)) << vectorToString(diff);
   }
 
   static void parseAndExpectFailure(const std::string& file_name) {
@@ -618,6 +617,9 @@ TEST_F(XacroTestFixture, test_yaml_nested) {
 }
 TEST_F(XacroTestFixture, test_yaml_mixed) {
   parseAndCompare("test_yaml_mixed");
+}
+TEST_F(XacroTestFixture, test_yaml_in_macro) {
+  parseAndCompare("test_yaml_in_macro");
 }
 // Note: test_yaml_* for advanced yaml types are ommitted
 TEST_F(XacroTestFixture, test_xacro_exist_optional) {

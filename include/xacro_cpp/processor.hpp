@@ -4,7 +4,6 @@
 /// Created: 2026.01.20
 #pragma once
 
-#include <cstdint>
 #include <map>
 #include <memory>
 #include <stdexcept>

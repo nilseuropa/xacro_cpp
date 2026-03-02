@@ -141,7 +141,8 @@ IncludeIsMainSourceRegex: ''
 IndentCaseLabels: true
 ### not available in v6
 IndentGotoLabels: true
-IndentPPDirectives: None
+IndentPPDirectives: AfterHash
+PPIndentWidth: 2
 ### v11+
 # IndentExternBlock: AfterExternBlock
 IndentWidth:     2

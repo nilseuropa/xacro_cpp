@@ -3,12 +3,9 @@
 /// Author: nilseuropa <marton@nowtech.hu>
 /// Created: 2026.01.20
 
-#include "xacro_cpp/processor.hpp"
-
 #include <algorithm>
 #include <cctype>
 #include <cmath>
-#include <cstdlib>
 #include <functional>
 #include <iomanip>
 #include <limits>
@@ -20,6 +17,7 @@
 #include <vector>
 
 #include "processor_internal.hpp"
+#include "xacro_cpp/processor.hpp"
 #include "xacro_cpp/tinyexpr.h"
 
 namespace xacro_cpp {
@@ -166,7 +164,7 @@ static void scanIdentifiers(const std::string& expr,
         }
       }
       std::string ident = expr.substr(i, j - i);
-      if (builtins.count(ident) == 0U) {
+      if (!builtins.contains(ident)) {
         onIdent(ident);
       }
       i = j;
@@ -181,7 +179,7 @@ static bool hasUnknownIdentifier(const std::string& expr, const std::unordered_m
   bool unknown = false;
   scanIdentifiers(expr, cBuiltins, [&](const std::string& ident) {
     static const std::string cDefaultSuffix = "__default__";
-    if (vars.find(ident) == vars.end() && vars.find(ident + cDefaultSuffix) == vars.end()) {
+    if (!vars.contains(ident) && !vars.contains(ident + cDefaultSuffix)) {
       unknown = true;
     }
   });
@@ -375,13 +373,29 @@ static bool parseQuotedString(const std::string& s, size_t* pos, std::string* ou
   return false;
 }
 
-static bool resolveYamlExpression(const std::string& expr,
-                                  const std::unordered_map<std::string, YamlValue>* yamlDocs,
-                                  std::string* out) {
+// Parses a YAML access expression starting at 'start' and returns the consumed length.
+// Supports:
+// - root.key
+// - root['key']
+// - root[0]
+// - root.get('key', default)
+static bool resolveYamlExpressionAt(const std::string& expr,
+                                   size_t start,
+                                   const std::unordered_map<std::string, YamlValue>* yamlDocs,
+                                   size_t* consumed,
+                                   std::string* out) {
   if ((yamlDocs == nullptr) || (out == nullptr)) {
     return false;
   }
-  size_t pos = 0;
+  auto stripQuotesLocal = [](const std::string& s) -> std::string {
+    if (s.size() >= 2) {
+      if ((s.front() == '"' && s.back() == '"') || (s.front() == '\'' && s.back() == '\'')) {
+        return s.substr(1, s.size() - 2);
+      }
+    }
+    return s;
+  };
+  size_t pos = start;
   skipWs(expr, &pos);
   std::string root;
   if (!parseIdentifierToken(expr, &pos, &root)) {
@@ -404,6 +418,93 @@ static bool resolveYamlExpression(const std::string& expr,
       std::string key;
       if (!parseIdentifierToken(expr, &pos, &key)) {
         return false;
+      }
+      // Dict-like helper: calibration.get('key', default)
+      if (key == "get") {
+        skipWs(expr, &pos);
+        if (pos >= expr.size() || expr[pos] != '(') {
+          return false;
+        }
+        ++pos; // consume '('
+        skipWs(expr, &pos);
+        // key argument
+        std::string k;
+        if (pos < expr.size() && (expr[pos] == '\'' || expr[pos] == '"')) {
+          if (!parseQuotedString(expr, &pos, &k)) {
+            return false;
+          }
+        } else {
+          // Allow bare identifiers as keys.
+          if (!parseIdentifierToken(expr, &pos, &k)) {
+            return false;
+          }
+        }
+        skipWs(expr, &pos);
+        // optional default
+        std::string defaultExpr = "0.0";
+        if (pos < expr.size() && expr[pos] == ',') {
+          ++pos;
+          size_t defStart = pos;
+          int depth = 1;
+          bool inSingle = false;
+          bool inDouble = false;
+          while (pos < expr.size()) {
+            char cc = expr[pos];
+            if (cc == '\\') {
+              // skip escaped char
+              if (pos + 1 < expr.size()) {
+                pos += 2;
+                continue;
+              }
+              return false;
+            }
+            if (!inDouble && cc == '\'') {
+              inSingle = !inSingle;
+              ++pos;
+              continue;
+            }
+            if (!inSingle && cc == '"') {
+              inDouble = !inDouble;
+              ++pos;
+              continue;
+            }
+            if (!inSingle && !inDouble) {
+              if (cc == '(') {
+                ++depth;
+              } else if (cc == ')') {
+                --depth;
+                if (depth == 0) {
+                  break;
+                }
+              }
+            }
+            ++pos;
+          }
+          if (pos >= expr.size() || expr[pos] != ')') {
+            return false;
+          }
+          defaultExpr = trimWs(expr.substr(defStart, pos - defStart));
+        }
+        // Expect closing ')'
+        skipWs(expr, &pos);
+        if (pos >= expr.size() || expr[pos] != ')') {
+          return false;
+        }
+        ++pos;
+        if (current->mType != YamlValue::Type::cMap) {
+          return false;
+        }
+        auto mit = current->mMapValue.find(k);
+        if (mit == current->mMapValue.end()) {
+          // Missing key: return default directly (as a scalar string).
+          *out = stripQuotesLocal(defaultExpr);
+          if (consumed != nullptr) {
+            *consumed = pos - start;
+          }
+          return true;
+        }
+        current = &mit->second;
+        continue;
       }
       if (current->mType != YamlValue::Type::cMap) {
         return false;
@@ -475,7 +576,23 @@ static bool resolveYamlExpression(const std::string& expr,
     return false;
   }
   *out = yamlValueToString(*current);
+  if (consumed != nullptr) {
+    *consumed = pos - start;
+  }
   return true;
+}
+
+static bool resolveYamlExpression(const std::string& expr,
+                                 const std::unordered_map<std::string, YamlValue>* yamlDocs,
+                                 std::string* out) {
+  size_t consumed = 0;
+  if (!resolveYamlExpressionAt(expr, 0, yamlDocs, &consumed, out)) {
+    return false;
+  }
+  // For the "whole-expression" resolver, require the entire string to be consumed (ignoring trailing ws).
+  size_t end = consumed;
+  skipWs(expr, &end);
+  return end == expr.size();
 }
 
 static bool tryEvalYamlExpr(const std::string& expr,
@@ -494,8 +611,46 @@ static bool tryEvalYamlExpr(const std::string& expr,
   return true;
 }
 
+static std::string replaceInlineYamlAccesses(const std::string& expr,
+                                            const std::unordered_map<std::string, YamlValue>* yamlDocs) {
+  if (yamlDocs == nullptr) {
+    return expr;
+  }
+  std::string out;
+  out.reserve(expr.size());
+  for (size_t i = 0; i < expr.size();) {
+    char c = expr[i];
+    auto isIdent = [](char ch) {
+      return (std::isalnum(static_cast<unsigned char>(ch)) != 0) || (ch == '_');
+    };
+    if ((std::isalpha(static_cast<unsigned char>(c)) != 0) || (c == '_')) {
+      // Avoid starting in the middle of an identifier.
+      if (i > 0 && isIdent(expr[i - 1])) {
+        out.push_back(c);
+        ++i;
+        continue;
+      }
+      size_t consumed = 0;
+      std::string resolved;
+      if (resolveYamlExpressionAt(expr, i, yamlDocs, &consumed, &resolved)) {
+        // Only replace if this actually looks like an access (root + something).
+        // For maps, resolveYamlExpressionAt returns false (non-scalar), so we're safe.
+        if (consumed > 0) {
+          out += resolved;
+          i += consumed;
+          continue;
+        }
+      }
+    }
+    out.push_back(c);
+    ++i;
+  }
+  return out;
+}
+
 static bool tryEvalNumericExpr(const std::string& expr,
                                const std::unordered_map<std::string, std::string>& vars,
+                               const std::unordered_map<std::string, YamlValue>* yamlDocs,
                                const std::function<std::string(const std::string&)>& resolveVar,
                                std::string* out) {
   std::unordered_map<std::string, std::string> evalVars = vars;
@@ -508,6 +663,7 @@ static bool tryEvalNumericExpr(const std::string& expr,
     }
   }
   std::string ex2 = replaceIndexingWithValues(expr, evalVars);
+  ex2 = replaceInlineYamlAccesses(ex2, yamlDocs);
   bool resolved = false;
   std::string val = evalStringWithVars(ex2, evalVars, &resolved);
   if (!resolved) {
@@ -527,7 +683,7 @@ void collectIdentifiers(const std::string& expr, std::vector<std::string>* out) 
   }
   const auto& cBuiltins = builtinIdentifiers();
   scanIdentifiers(expr, cBuiltins, [&](const std::string& ident) {
-    if (std::find(out->begin(), out->end(), ident) == out->end()) {
+    if (std::ranges::find(*out, ident) == out->end()) {
       out->push_back(ident);
     }
   });
@@ -593,7 +749,7 @@ double evalNumber(const std::string& expr, const std::unordered_map<std::string,
   std::vector<double> storage;
   storage.reserve(effectiveVars.size() + 1);
   /// Inject common constants
-  static const double cPi = 3.14159265358979323846;
+  static constexpr double cPi = 3.14159265358979323846;
   storage.push_back(cPi);
   v.push_back(TeVariable{"pi", &storage.back(), cTeVariable, nullptr});
   auto toLower = [](std::string s) {
@@ -640,7 +796,7 @@ double evalNumber(const std::string& expr, const std::unordered_map<std::string,
       comp = it->second;
     }
   } else {
-    comp = teCompile(ex.c_str(), v.data(), (int)v.size(), &err);
+    comp = teCompile(ex.c_str(), v.data(), static_cast<int>(v.size()), &err);
   }
   if (err != 0) {
     if (ok != nullptr) {
@@ -699,7 +855,7 @@ bool evalBool(const std::string& expr, const std::unordered_map<std::string, std
     }
     s = s.substr(i, j - i);
     for (auto& c : s) {
-      c = (char)std::tolower((unsigned char)c);
+      c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     }
     return s;
   };
@@ -739,7 +895,7 @@ bool evalBool(const std::string& expr, const std::unordered_map<std::string, std
           return s.substr(1, s.size() - 2);
         }
         /// identifier lookup
-        if (!s.empty() && ((std::isalpha((unsigned char)s[0]) != 0) || s[0] == '_')) {
+        if (!s.empty() && ((std::isalpha(static_cast<unsigned char>(s[0])) != 0) || s[0] == '_')) {
           auto it = effectiveVars.find(s);
           return it != effectiveVars.end() ? it->second : s;
         }
@@ -790,11 +946,11 @@ bool evalBool(const std::string& expr, const std::unordered_map<std::string, std
   if (isSimpleIdentifier(exprTrim)) {
     auto it = effectiveVars.find(exprTrim);
     if (it != effectiveVars.end()) {
-      std::string v = trimLower(it->second);
-      if (v == "true") {
+      std::string var = trimLower(it->second);
+      if (var == "true") {
         return true;
       }
-      if (v == "false" || v == "0" || v.empty()) {
+      if (var == "false" || var == "0" || var.empty()) {
         return false;
       }
       char* end = nullptr;
@@ -899,7 +1055,7 @@ static std::string evalStringTemplate(const std::string& text,
       }
     }
     if (resolveStack != nullptr) {
-      if (std::find(resolveStack->begin(), resolveStack->end(), name) != resolveStack->end()) {
+      if (std::ranges::find(*resolveStack, name) != resolveStack->end()) {
         std::string msg = "circular variable definition: ";
         for (const auto& entry : *resolveStack) {
           msg += entry;
@@ -926,7 +1082,7 @@ static std::string evalStringTemplate(const std::string& text,
     out.reserve(in.size());
     for (size_t i = 0; i < in.size(); ++i) {
       if (in[i] == '$' && i + 1 < in.size() && in[i + 1] == '$') {
-        out.push_back(kDollarMarker);
+        out.push_back(cDollarMarker);
         /// skip second '$'
         ++i;
       } else {
@@ -994,7 +1150,7 @@ static std::string evalStringTemplate(const std::string& text,
           i = j + 1;
           continue;
         }
-        if (!tryEvalNumericExpr(expr, vars, resolveVar, &resolvedChunk)) {
+        if (!tryEvalNumericExpr(expr, vars, yamlDocs, resolveVar, &resolvedChunk)) {
           out += rawExpr;
         } else {
           out += resolvedChunk;
@@ -1031,12 +1187,12 @@ static std::string evalStringTemplate(const std::string& text,
   /// Also handle $(find pkg) style outside of ${...}
   try {
     static const std::regex cReFind("\\$\\(\\s*find\\s+([^\\)]+)\\)");
-    std::smatch m;
-    std::string s = out;
-    std::string result;
+    m = std::smatch();
+    s = out;
+    result = "";
     result.reserve(s.size());
-    std::string::const_iterator searchStart(s.cbegin());
-    while (std::regex_search(searchStart, s.cend(), m, cReFind)) {
+    std::string::const_iterator searchStart2(s.cbegin());
+    while (std::regex_search(searchStart2, s.cend(), m, cReFind)) {
       result.append(m.prefix().first, m.prefix().second);
       std::string pkg = trimWs(std::string(m[1]));
       pkg = stripQuotes(pkg);
@@ -1045,9 +1201,9 @@ static std::string evalStringTemplate(const std::string& text,
         throw ProcessingError("package not found: " + pkg);
       }
       result += found;
-      searchStart = m.suffix().first;
+      searchStart2 = m.suffix().first;
     }
-    result.append(searchStart, s.cend());
+    result.append(searchStart2, s.cend());
     out = std::move(result);
   } catch (const ProcessingError&) {
     throw;

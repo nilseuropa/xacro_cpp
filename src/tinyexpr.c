@@ -109,7 +109,7 @@ static TeExpr* newValue(double v) {
   return e;
 }
 
-static int varIndex(State* s, const char* name, int len) {
+static int varIndex(const State* s, const char* name, int len) {
   for (int i = 0; i < s->mLookupLen; i++) {
     const char* n = s->mLookup[i].mName;
     if ((int)strlen(n) == len && strncmp(n, name, len) == 0) {

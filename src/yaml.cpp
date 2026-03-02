@@ -3,7 +3,7 @@
 /// Author: nilseuropa <marton@nowtech.hu>
 /// Created: 2026.01.20
 
-#include "xacro_cpp/processor.hpp"
+#include <yaml-cpp/yaml.h>
 
 #include <cctype>
 #include <iomanip>
@@ -11,9 +11,8 @@
 #include <sstream>
 #include <string>
 
-#include <yaml-cpp/yaml.h>
-
 #include "processor_internal.hpp"
+#include "xacro_cpp/processor.hpp"
 
 namespace xacro_cpp {
 
@@ -27,7 +26,7 @@ static bool isBoolScalar(const std::string& raw) {
   std::string lower;
   lower.reserve(raw.size());
   for (char c : raw) {
-    lower.push_back((char)std::tolower(static_cast<unsigned char>(c)));
+    lower.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
   }
   return lower == "true" || lower == "false" || lower == "yes" || lower == "no" || lower == "on" || lower == "off";
 }

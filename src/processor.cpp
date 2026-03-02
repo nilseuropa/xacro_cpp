@@ -7,28 +7,26 @@
 
 #include <algorithm>
 #include <cctype>
-#include <cstdlib>
 #include <fstream>
 #include <functional>
 #include <iostream>
 #include <ranges>
 #include <regex>
 #include <sstream>
-#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <system_error>
 #include <unordered_set>
 #include <vector>
 #if __has_include(<filesystem>)
-#include <filesystem>
+#  include <filesystem>
 namespace fs = std::filesystem;
 #endif
 
 #include <tinyxml2.h>
 #if __has_include(<ament_index_cpp/get_package_share_directory.hpp>)
-#include <ament_index_cpp/get_package_share_directory.hpp>
-#define XACRO_HAVE_AMENT_INDEX 1
+#  include <ament_index_cpp/get_package_share_directory.hpp>
+#  define XACRO_HAVE_AMENT_INDEX 1
 #endif
 
 #include "processor_internal.hpp"
@@ -523,10 +521,10 @@ bool Processor::defineProperty(const tinyxml2::XMLElement* el) {
     std::unordered_set<std::string> visiting;
     std::unordered_set<std::string> visited;
     std::function<bool(const std::string&)> hasCycle = [&](const std::string& cur) -> bool {
-      if (visiting.count(cur) != 0U) {
+      if (visiting.contains(cur)) {
         return true;
       }
-      if (visited.count(cur) != 0U) {
+      if (visited.contains(cur)) {
         return false;
       }
       visiting.insert(cur);
@@ -620,7 +618,7 @@ bool Processor::defineArg(const tinyxml2::XMLElement* el) {
   if (!name.empty()) {
     mArgNames.insert(name);
   }
-  if (mVars.find(name) == mVars.end()) {
+  if (!mVars.contains(name)) {
     mVars[name] = evalStringTemplate(def, mVars, &mYamlDocs);
   }
   return true;
@@ -786,10 +784,7 @@ void Processor::removeComments(tinyxml2::XMLNode* node) {
   }
 }
 
-void Processor::collectArgsAndProps(tinyxml2::XMLElement* root,
-                                    bool collectProps,
-                                    bool removeProps,
-                                    bool removeArgs) {
+void Processor::collectArgsAndProps(tinyxml2::XMLElement* root, bool collectProps, bool removeProps, bool removeArgs) {
   if (root == nullptr) {
     return;
   }
@@ -1225,7 +1220,7 @@ bool Processor::expandMacroCall(tinyxml2::XMLElement* el,
     if (n.empty()) {
       return;
     }
-    if (std::find(v->begin(), v->end(), n) == v->end()) {
+    if (std::ranges::find(*v, n) == v->end()) {
       v->push_back(n);
     }
   };
@@ -1408,13 +1403,14 @@ bool Processor::expandMacroCall(tinyxml2::XMLElement* el,
               /// splice children
               std::vector<tinyxml2::XMLNode*> clonedIf;
               for (auto* c3 = ce->FirstChild(); c3 != nullptr; c3 = c3->NextSibling()) {
-              clonedIf.push_back(c3->DeepClone(mDoc.get()));
+                clonedIf.push_back(c3->DeepClone(mDoc.get()));
               }
               for (auto* n2 : clonedIf) {
                 insertBefore(parent, ce, n2);
               }
               parent->DeleteChild(ce);
-              for (auto* n2 : clonedIf) {
+              // Preserve document order: the DFS uses a LIFO stack, so push in reverse.
+              for (auto& n2 : std::ranges::reverse_view(clonedIf)) {
                 st.push_back({n2, curBase});
               }
               mModified = true;
@@ -1470,6 +1466,48 @@ bool Processor::expandMacroCall(tinyxml2::XMLElement* el,
               pval = text;
             }
           }
+
+          // Special-case xacro.load_yaml(...) for macro-local properties.
+          // The global defineProperty() path handles this, but macro expansion uses this fast-path.
+          {
+            std::string expr = trimWs(pval);
+            if (expr.size() >= 3 && expr[0] == '$' && expr[1] == '{' && expr.back() == '}') {
+              expr = trimWs(expr.substr(2, expr.size() - 3));
+            }
+            std::smatch mm;
+            static std::regex cReLoad(R"(^\s*xacro\.load_yaml\((.*)\)\s*$)");
+            if (!pname.empty() && std::regex_match(expr, mm, cReLoad)) {
+              std::string arg = Processor::trim(std::string(mm[1]));
+              std::string argEval = evalStringTemplate(arg, scope, &mYamlDocs);
+              if (argEval == arg) {
+                auto it = scope.find(arg);
+                if (it != scope.end()) {
+                  argEval = it->second;
+                }
+              }
+              arg = stripQuotes(argEval);
+              std::string full;
+#if defined(__cpp_lib_filesystem)
+              fs::path p(arg);
+              if (p.is_absolute()) {
+                full = p.string();
+              } else {
+                full = (fs::path(curBase) / p).string();
+              }
+#else
+              full = (!arg.empty() && arg[0] == '/') ? arg : (curBase + "/" + arg);
+#endif
+              mYamlDocs[pname] = parseYamlFile(full);
+              // Store the resolved file path as the property's string value (mirrors defineProperty()).
+              scopeFrame.setProperty(pname, full, scopeAttr, mVars);
+              if (auto* par = ce->Parent()) {
+                par->DeleteChild(ce);
+              }
+              mModified = true;
+              continue;
+            }
+          }
+
           pval = evalStringTemplate(pval, scope, &mYamlDocs);
           if (!pname.empty()) {
             scopeFrame.setProperty(pname, pval, scopeAttr, mVars);
@@ -1649,8 +1687,8 @@ void Processor::restoreDollarMarkers(tinyxml2::XMLNode* node) {
       const tinyxml2::XMLAttribute* a = el->FirstAttribute();
       while (a != nullptr) {
         std::string val = (a->Value() != nullptr) ? a->Value() : "";
-        if (val.find(kDollarMarker) != std::string::npos) {
-          std::replace(val.begin(), val.end(), kDollarMarker, '$');
+        if (val.find(cDollarMarker) != std::string::npos) {
+          std::ranges::replace(val, cDollarMarker, '$');
           updates.emplace_back(a->Name(), val);
         }
         a = a->Next();
@@ -1662,8 +1700,8 @@ void Processor::restoreDollarMarkers(tinyxml2::XMLNode* node) {
       const char* tv = txt->Value();
       if (tv != nullptr) {
         std::string val = tv;
-        if (val.find(kDollarMarker) != std::string::npos) {
-          std::replace(val.begin(), val.end(), kDollarMarker, '$');
+        if (val.find(cDollarMarker) != std::string::npos) {
+          std::ranges::replace(val, cDollarMarker, '$');
           txt->SetValue(val.c_str());
         }
       }

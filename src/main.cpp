@@ -37,9 +37,9 @@ int main(int argc, char** argv) {
     }
   }
 
-  Processor p;
   std::string err;
   try {
+    Processor p;
     p.run(opts, &err);
     return 0;
   } catch (const xacro_cpp::ProcessingError& e) {

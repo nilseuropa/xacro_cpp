@@ -1,0 +1,9 @@
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:macro name="m" params="path">
+    <xacro:property name="cfg" value="${xacro.load_yaml(path)}"/>
+    <xacro:property name="v" value="${1.0 + cfg.get('x', 0.0)}"/>
+    <link name="L_${v}"/>
+  </xacro:macro>
+
+  <xacro:m path="yaml_in_macro.yaml"/>
+</robot>
